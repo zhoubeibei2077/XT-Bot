@@ -1,0 +1,75 @@
+name: XT-Bot
+
+on:
+  workflow_dispatch:      # 允许手动触发
+  schedule:
+    - cron: '*/30 * * * *'  # 每30分钟运行
+
+jobs:
+  auto-process:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Shanghai
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GH_TOKEN }}  # 使用你设置的 secret
+
+      - name: Setup Git
+        run: |
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: |
+          cd TypeScript
+          bun install
+
+      - name: Run fetch script
+        env:
+          AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
+          SCREEN_NAME: ${{ secrets.SCREEN_NAME }}
+        run: |
+          cd TypeScript/scripts
+          bun run fetch-following.ts
+          bun run fetch-home-latest-timeline.ts
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Create directories
+        run: |
+          mkdir -p Python/output
+          mkdir -p Python/downloads
+
+      - name: Install dependencies
+        run: |
+          cd Python
+          pip install -r requirements.txt
+
+      - name: Run X-Bot.py
+        run: |
+          cd Python/src
+          python X-Bot.py
+
+      - name: Run T-Bot.py
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: |
+          cd Python/src
+          python T-Bot.py
+
+      - name: Commit and push changes
+        run: |
+          git add Python/output Python/dataBase Python/config TypeScript/tweets
+          git commit -m "chore: update user data [skip ci]" || exit 0
+          git push

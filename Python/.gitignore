@@ -1,0 +1,30 @@
+# Python 缓存和临时文件
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 虚拟环境
+venv/
+env/
+.venv/
+env.bak/
+.venv.bak/
+
+# IDE 和编辑器文件
+*.iml
+*.pydevproject
+.project
+.pydevpicker
+.idea/
+.vscode/  # 如果你希望共享 VS Code 配置，可以保留 .vscode
+
+# 测试和构建输出
+.coverage
+htmlcov/
+dist/
+build/
+
+# 其他
+*.log
+*.so
+*.egg-info/

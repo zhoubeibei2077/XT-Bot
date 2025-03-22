@@ -1,0 +1,15 @@
+# 顶层忽略项
+*.log
+*.tmp
+.DS_Store
+
+# 避免覆盖子目录的 .gitignore
+!Python/.gitignore
+!TypeScript/.gitignore
+
+# Docker 相关
+docker-compose.yml  # 如果不需要忽略
+!.env  # 保留环境变量文件
+
+.idea/
+*logs/
