@@ -9,6 +9,8 @@ Twitter媒体同步机器人，支持自动同步时间线/用户推文，通过
 - 全量获取指定用户历史推文及媒体
 - 本地化数据存储（推文数据/推送记录）
 - GitHub Actions 自动化部署
+- Twitter广播/空间链接推文同步到Telegram(飞书(可选))
+- Telegram Bot上传异常告警信息添加飞书机器人消息通知(可选)
 
 ## 快速配置 ⚙️
 
@@ -28,6 +30,7 @@ REDIS_CONFIG  # Redis配置格式如下：
   "password": "your_password",
   "db": 0
 }
+LARK_KEY      # 飞书机器人key(可选)https://open.feishu.cn/open-apis/bot/v2/hook/{LARK_KEY}
 ```
 
 > 关于 REDIS_CONFIG 补充

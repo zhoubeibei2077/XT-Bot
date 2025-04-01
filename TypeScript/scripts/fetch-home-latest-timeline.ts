@@ -8,9 +8,11 @@ import type {TweetApiUtilsData} from "twitter-openapi-typescript";
 console.log(`----- ----- ----- ----- fetch-home-latest-timeline begin ----- ----- ----- -----`);
 const client = await XAuthClient();
 
+console.log(`🔄 开始获取首页最新时间线...`);
 const resp = await client.getTweetApi().getHomeLatestTimeline({
     count: 100,
 });
+console.log(`✅ 成功获取首页最新时间线，原始推文数量：${resp.data.data.length}条`);
 
 // 过滤出原创推文
 const originalTweets = resp.data.data.filter((tweet) => {
@@ -19,10 +21,14 @@ const originalTweets = resp.data.data.filter((tweet) => {
 
 // 获取关注用户列表
 const followingConfig = `../../Python/config/followingUser.json`;
+console.log(`📂 读取关注用户配置文件：${followingConfig}...`);
 const followingJson = JSON.parse(await fs.readFile(followingConfig, 'utf-8'));
 const restIds = followingJson.map(item => item.restId);
+console.log(`👥 共获取到${restIds.length}个关注用户`);
 
 const rows: TweetApiUtilsData[] = [];
+console.log("🔧 开始处理推文数据，过滤非关注用户及1天外的推文...");
+
 // 输出所有原创推文的访问地址
 originalTweets.forEach((tweet) => {
     const isQuoteStatus = get(tweet, "raw.result.legacy.isQuoteStatus");
@@ -94,13 +100,15 @@ originalTweets.forEach((tweet) => {
         publishTime,
     });
 });
+console.log(`⏳ 初步筛选出符合关注用户且最近1天的原创推文，共${rows.length}条`);
 
 const path = require('path');
 const outputPath = `../tweets/${dayjs().format("YYYY-MM")}/${dayjs().format("YYYY-MM-DD")}.json`;
 const dirPath = path.dirname(outputPath);
 
-// 确保目录存在
+console.log(`📂 检查输出目录是否存在：${dirPath}`);
 if (!fs.existsSync(dirPath)) {
+    console.log(`📂 目录不存在，创建目录：${dirPath}`);
     fs.mkdirSync(dirPath, {recursive: true});
 }
 
@@ -108,17 +116,22 @@ let existingRows: TweetApiUtilsData[] = [];
 
 // 如果文件存在，读取现有内容
 if (fs.existsSync(outputPath)) {
+    console.log(`📂 读取现有数据文件：${outputPath}`);
     existingRows = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
+    console.log(`📋 现有文件中共有${existingRows.length}条记录`);
 }
 
-// 合并现有数据和新数据
+console.log(`🔄 合并现有数据（${existingRows.length}条）与新增数据（${rows.length}条）...`);
 const allRows = [...existingRows, ...rows];
+console.log(`📈 去重前总数据量：${allRows.length}条`);
 
 // 通过 tweetUrl 去重
 const uniqueRows = Array.from(
     new Map(allRows.map(row => [row.tweetUrl, row])).values()
 );
+console.log(`♻️ 去重后剩余数据量：${uniqueRows.length}条`);
 
+console.log("📊 按推文ID升序排序数据...");
 const sortedRows = uniqueRows.sort((a, b) => {
     const urlA = new URL(a.tweetUrl);
     const urlB = new URL(b.tweetUrl);
@@ -127,8 +140,11 @@ const sortedRows = uniqueRows.sort((a, b) => {
     return idA.localeCompare(idB); // Twitter ID 本身就包含时间信息，可以直接比较
 });
 
+console.log(`💾 正在写入数据到文件：${outputPath}`);
 fs.writeFileSync(
     outputPath,
     JSON.stringify(sortedRows, null, 2)
 );
+console.log(`🎉 数据写入完成，共保存${sortedRows.length}条推文数据`);
+
 console.log(`----- ----- ----- ----- fetch-home-latest-timeline end ----- ----- ----- -----`);
