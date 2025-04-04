@@ -181,7 +181,7 @@ class EntryProcessor:
         return {
             "file_name": filename,
             "user": {
-                "screenName": user_info["screenName"],
+                "screen_name": user_info["screen_name"],
                 "name": user_info.get("name", "N/A")
             },
             "media_type": media_type,
@@ -191,8 +191,8 @@ class EntryProcessor:
             "upload_info": {},
             "is_downloaded": False,
             "download_info": {},
-            "fullText": "",
-            "publishTime": ""
+            "full_text": "",
+            "publish_time": ""
         }
 
     def process_entry(self, entry, user_info, processed_ids):
@@ -209,8 +209,8 @@ class EntryProcessor:
         # 补充元数据
         for e in new_entries:
             e.update({
-                "fullText": entry.get("fullText", ""),
-                "publishTime": entry.get("publishTime", "")
+                "full_text": entry.get("full_text", ""),
+                "publish_time": entry.get("publish_time", "")
             })
 
         return new_entries
@@ -220,7 +220,7 @@ class EntryProcessor:
         entries = []
         for url in entry.get(media_type, []):
             filename = self._extract_filename(url)
-            entry_id = self.generate_entry_id(filename, user_info["screenName"], media_type)
+            entry_id = self.generate_entry_id(filename, user_info["screen_name"], media_type)
 
             if entry_id in processed_ids:
                 continue
@@ -234,13 +234,13 @@ class EntryProcessor:
     def _process_special_urls(self, entry, user_info, processed_ids):
         """处理广播/空间链接"""
         entries = []
-        for url in entry.get("expandUrls", []):
+        for url in entry.get("expand_urls", []):
             media_type = self._detect_media_type(url)
             if not media_type:
                 continue
 
             filename = self._extract_filename(url)
-            entry_id = self.generate_entry_id(filename, user_info["screenName"], media_type)
+            entry_id = self.generate_entry_id(filename, user_info["screen_name"], media_type)
 
             if entry_id in processed_ids:
                 continue
@@ -338,7 +338,7 @@ class XBotCore:
             for entry in user_entries:
                 entry_id = EntryProcessor.generate_entry_id(
                     entry["file_name"],
-                    entry["user"]["screenName"],
+                    entry["user"]["screen_name"],
                     entry["media_type"]
                 )
                 self.shard_manager.save_entry_id(entry_id)
@@ -361,17 +361,17 @@ class XBotCore:
 
             if username not in organized:
                 organized[username] = {
-                    "screenName": username,
+                    "screen_name": username,
                     "name": user.get("name", "N/A"),
                     "entries": []
                 }
 
             organized[username]["entries"].append({
-                "fullText": item.get("fullText", ""),
-                "publishTime": item.get("publishTime", ""),
+                "full_text": item.get("fullText", ""),
+                "publish_time": item.get("publishTime", ""),
                 "images": item.get("images", []),
                 "videos": item.get("videos", []),
-                "expandUrls": item.get("expandUrls", [])
+                "expand_urls": item.get("expandUrls", [])
             })
         return organized
 
@@ -392,14 +392,14 @@ class XBotCore:
                 merged.append(entry)
                 added += 1
 
-        merged.sort(key=lambda x: x.get("publishTime", ""))
+        merged.sort(key=lambda x: x.get("publish_time", ""))
         logger.info(f"🆕 新增条目: {added} | 合并后总数: {len(merged)}")
         return merged
 
     @staticmethod
     def _get_entry_id(entry):
         """获取条目唯一标识"""
-        return f"{entry['file_name']}_{entry['user']['screenName']}_{entry['media_type']}"
+        return f"{entry['file_name']}_{entry['user']['screen_name']}_{entry['media_type']}"
 
 # --------------------
 # 命令行接口

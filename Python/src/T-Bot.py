@@ -238,17 +238,12 @@ class DownloadManager:
             logger.error(error_msg)
 
             if download_info['download_attempts'] >= Config.MAX_DOWNLOAD_ATTEMPTS:
-                # 🔴 发送通知并标记
-                if not item.get('upload_info', {}).get('notification_sent', False):
-                    Notifier.send_lark_alert(
-                        f"🔴 连续下载失败\n文件名: {item['file_name']}\n错误: {str(e)[:Config.NOTIFICATION_TRUNCATE]}"
-                    )
                 item['upload_info'] = {
                     "success": False,
                     "error_type": "max_download_attempts",
                     "message": str(e),
                     "timestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
-                    "notification_sent": True  # 标记已通知
+                    "notification_sent": False  # 标记未通知，后续统一处理
                 }
 
     @classmethod
@@ -283,6 +278,9 @@ class UploadManager:
     
     def __init__(self):
         env_vars = Config.get_env_vars()
+        if not env_vars['bot_token'] or not env_vars['chat_id']:
+            logger.error("❌ 必须配置 BOT_TOKEN 和 CHAT_ID 环境变量！")
+            sys.exit(1)
         self.bot = telegram.Bot(token=env_vars['bot_token'])
         self.chat_id = env_vars['chat_id']
 
@@ -332,18 +330,18 @@ class UploadManager:
     def _send_unrecoverable_alert(self, item: Dict[str, Any], error_type: str) -> None:
         """发送不可恢复错误通知"""
         alert_msg = (
-            "🔴 历史数据推送失败\n"
+            "🔴 推送失败\n"
             f"文件名: {item['file_name']}\n"
             f"类型: {error_type}\n"
-            f"最后错误: {item['upload_info']['message'][:Config.NOTIFICATION_TRUNCATE]}"
+            f"错误: {item['upload_info']['message'][:Config.NOTIFICATION_TRUNCATE]}"
         )
         Notifier.send_lark_alert(alert_msg)
 
     def _send_text_message(self, item: Dict[str, Any]) -> int:
         """发送文本消息到 Telegram 和飞书"""
         # 生成基础文本（复用原有逻辑）
-        screen_name = item['user']['screenName']
-        publish_time = datetime.fromisoformat(item['publishTime']).strftime("%Y-%m-%d %H:%M:%S")
+        screen_name = item['user']['screen_name']
+        publish_time = datetime.fromisoformat(item['publish_time']).strftime("%Y-%m-%d %H:%M:%S")
         url = item['url']
         base_text = f"#{screen_name}\n{publish_time}\n{url}"
 
@@ -389,13 +387,13 @@ class UploadManager:
 
     def _build_caption(self, item: Dict[str, Any]) -> str:
         """构建caption (保持原始优先级截断)"""
-        user_info = f"#{item['user']['screenName']} {item['user']['name']}"
-        publish_time = datetime.fromisoformat(item['publishTime']).strftime("%Y-%m-%d %H:%M:%S")
+        user_info = f"#{item['user']['screen_name']} {item['user']['name']}"
+        publish_time = datetime.fromisoformat(item['publish_time']).strftime("%Y-%m-%d %H:%M:%S")
         base_info = f"{user_info}\n{publish_time}"
         remaining = Config.TELEGRAM_LIMITS['caption'] - len(base_info) - 1  # 保持原始计算方式
         
         # 保持原始截断逻辑
-        text = item['fullText']
+        text = item['full_text']
         if len(text) > remaining:
             truncated = text[:remaining-3] + "..."
         else:
@@ -417,10 +415,6 @@ class UploadManager:
         # 错误类型判断
         if isinstance(error, FileTooLargeError):
             error_type = 'file_too_large'
-            # 仅在此错误类型下检查通知标记
-            if not item['upload_info'].get('notification_sent', False):
-                Notifier.send_lark_alert(f"📦 文件大小超标\n文件名: {item['file_name']}")
-                item['upload_info']['notification_sent'] = True  # 永久标记
         else:
             error_type = 'api_error'
             # 其他错误类型直接通知（无标记检查）
