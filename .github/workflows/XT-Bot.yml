@@ -3,7 +3,7 @@ name: XT-Bot
 on:
   workflow_dispatch:      # 允许手动触发
   schedule:
-    - cron: '*/30 * * * *'  # 每30分钟运行
+    - cron: '20,50 * * * *'  # 每30分钟运行
 
 jobs:
   auto-process:
@@ -55,6 +55,11 @@ jobs:
           cd Python
           pip install -r requirements.txt
 
+      - name: Run generate_user_card.py
+        run: |
+          cd Python/src
+          python generate_user_card.py
+
       - name: Run X-Bot.py
         run: |
           cd Python/src
@@ -68,6 +73,13 @@ jobs:
         run: |
           cd Python/src
           python T-Bot.py
+
+      - name: Upload Response Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: network-responses-${{ github.run_id }}  # 唯一标识
+          path: TypeScript/resp/
+          retention-days: 7  # 自动清理
 
       - name: Commit and push changes
         run: |

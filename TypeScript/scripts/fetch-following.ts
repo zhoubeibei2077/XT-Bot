@@ -2,6 +2,7 @@ import {XAuthClient} from "./utils";
 import path from 'path';
 import fs from "fs-extra";
 import {get} from 'lodash'; // 添加lodash.get安全访问
+import dayjs from "dayjs";
 
 console.log(`----- ----- ----- ----- fetch-following begin ----- ----- ----- -----`);
 try {
@@ -18,10 +19,10 @@ try {
     }
 
     const userId = response.data.user.restId;
-    const outputPath = `../../Python/config/followingUser.json`;
 
-    const outputDir = path.dirname(outputPath);
-    fs.ensureDirSync(outputDir);
+    const timestamp = dayjs().format('YYYYMMDD-HHmmss');
+    const rawOutputPath = path.join('../resp/respFollowing', `${timestamp}.json`);
+    fs.ensureDirSync(path.dirname(rawOutputPath));
 
     let cursor: string | undefined;
     let allUsers = [];
@@ -73,8 +74,32 @@ try {
     } while (true); // 改为由内部条件控制
 
     // 数据写入
-    await fs.writeFile(outputPath, JSON.stringify(allUsers, null, 2));
+    await fs.writeFile(rawOutputPath, JSON.stringify(allUsers, null, 2));
     console.log(`\n🎉 完成！共获取 ${allUsers.length} 个用户`);
+
+    console.log(`\n🛠️ 开始精简用户数据...`);
+
+    const simplifiedUsers = allUsers.map(user => ({
+        restId: user.restId,
+        legacy: {
+            name: get(user, 'legacy.name', ''),
+            screenName: get(user, 'legacy.screenName', ''),
+            createdAt: get(user, 'legacy.createdAt', ''),
+            description: get(user, 'legacy.description', ''),
+            entities: get(user, 'legacy.entities', {}),
+            profileBannerUrl: get(user, 'legacy.profileBannerUrl', ''),
+            profileImageUrlHttps: get(user, 'legacy.profileImageUrlHttps', '')
+        }
+    }));
+
+    console.log(`🔄 按 screenName 进行字典序排序...`);
+    simplifiedUsers.sort((a, b) =>
+        a.legacy.screenName.localeCompare(b.legacy.screenName)
+    );
+
+    const outputPath = `../../Python/config/followingUser.json`;
+    await fs.writeFile(outputPath, JSON.stringify(simplifiedUsers, null, 2));
+    console.log(`✅ 精简数据完成，已保存至: ${outputPath}`);
 
 } catch (error) {
     console.error('处理失败:', error.message);
