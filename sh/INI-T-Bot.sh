@@ -77,8 +77,8 @@ tell application "Terminal"
 end tell
 EOD
 
-# 步骤 4: 监控状态（增加超时）
-echo "⏳ 监控运行状态（最长30分钟）..."
+# 步骤 4: 监控状态（最长2小时）
+echo "⏳ 监控运行状态（最长2小时）..."
 start=$(date +%s)
 while true; do
   STATUS=$(gh run view ${RUN_ID} --json status --jq '.status')
@@ -95,8 +95,9 @@ while true; do
       ;;
   esac
 
-  if (( $(date +%s) - start > 1800 )); then
-    echo "⏰ 运行超时（30分钟）"
+  # 2小时超时判断（7200秒）
+  if (( $(date +%s) - start > 7200 )); then
+    echo "⏰ 运行超时（2小时）"
     exit 4
   fi
   sleep 20

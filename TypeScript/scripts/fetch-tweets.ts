@@ -1,7 +1,14 @@
 import path from 'path';
-import {formatDateToLocalISO} from "./utils";
 import {get} from "lodash";
+import dayjs from 'dayjs';
+import timezone from 'dayjs/plugin/timezone';
+import utc from 'dayjs/plugin/utc';
 import fs from "fs-extra";
+
+// 配置时区插件
+dayjs.extend(utc);
+dayjs.extend(timezone);
+const TZ_BEIJING = 'Asia/Shanghai';
 
 // 类型定义 ------------------------------------------------------------------------
 interface UserInfo {
@@ -65,11 +72,10 @@ export async function processTweetsByScreenName(
         // 步骤2: 定义输出路径 -------------------------------------------------------
         const outputFileName = `${userInfo.screenName}.json`;
         const finalOutputPath = path.join('../tweets/user/', outputFileName);
-        const rawOutputPath = path.join(outputDir, `${userInfo.userId}.json`);
-
+        const rawOutputDir = path.join(outputDir);
         // 确保目录存在
         fs.ensureDirSync(path.dirname(finalOutputPath));
-        fs.ensureDirSync(path.dirname(rawOutputPath));
+        fs.ensureDirSync(rawOutputDir);
 
         // 步骤3: 获取并处理推文 -----------------------------------------------------
         console.log('⏳ 开始获取推文数据...');
@@ -78,7 +84,7 @@ export async function processTweetsByScreenName(
             client,
             {
                 interval,
-                rawOutputPath
+                rawOutputDir
             }
         );
 
@@ -158,10 +164,11 @@ async function processTweets(
     client: any,
     options: {
         interval: number;
-        rawOutputPath: string;
+        rawOutputDir: string;
     }
 ) {
     let pageCount = 0;
+    let fileCounter = 1;
     let processedCount = 0;
     const rawTweets: any[] = [];
 
@@ -195,10 +202,28 @@ async function processTweets(
         // 记录原始数据
         if (response.data?.data?.length) {
             rawTweets.push(...response.data.data);
-            await fs.appendFile(
-                options.rawOutputPath,
-                response.data.data.map(JSON.stringify).join('\n') + '\n'
-            );
+            console.log(`💾 内存暂存量: ${rawTweets.length} 条`);
+
+            // 每50次请求写入文件
+            if (pageCount % 50 === 0 && rawTweets.length > 0) {
+                const filename = `${userId}_${fileCounter.toString().padStart(3, '0')}.json`;
+                const filePath = path.join(options.rawOutputDir, filename);
+
+                console.log(`🔄 达到分块阈值（50次请求），正在写入文件: ${filename}`);
+                try {
+                    await fs.writeFile(
+                        filePath,
+                        JSON.stringify(rawTweets, null, 2)
+                    );
+                } catch (err) {
+                    console.error(`❌ 文件写入失败: ${filePath}`, err);
+                    throw err; // 或实现重试逻辑
+                }
+
+                rawTweets.length = 0;  // 清空数组
+                fileCounter++;
+                console.log(`✅ 分块文件写入完成，已重置内存暂存`);
+            }
         } else {
             console.log("⚠️ 本次请求未获取到数据");
         }
@@ -216,7 +241,7 @@ async function processTweets(
 
     // 添加进度统计
     let totalFetched = 0;
-    for await (const tweet of tweetGenerator) {
+    for await (const item of tweetGenerator) {
         processedCount++;
         totalFetched++;
 
@@ -226,11 +251,74 @@ async function processTweets(
         }
     }
 
-    console.log(`\n=== 请求结束 ===`);
-    console.log(`📈 总计获取: ${totalFetched} 条`);
-    console.log(`📦 原始数据量: ${rawTweets.length} 条`);
+    // 写入剩余数据（最后未满50次请求的部分）
+    if (rawTweets.length > 0) {
+        const filename = `${userId}_${fileCounter.toString().padStart(3, '0')}.json`;
+        const filePath = path.join(options.rawOutputDir, filename);
 
-    return {processedCount, rawTweets};
+        console.log(`📦 正在写入最终分块文件: ${filename}`);
+        await fs.writeFile(filePath, JSON.stringify(rawTweets, null, 2));
+    }
+
+    console.log(`\n=== 请求结束 ===`);
+
+    // 合并所有分块文件
+    console.log(`\n🔗 开始合并分块文件...`);
+    const fileTweets: any[] = [];
+
+    try {
+        const files = await fs.readdir(options.rawOutputDir);
+        // 按文件名排序确保顺序正确
+        files.sort((a, b) => a.localeCompare(b, undefined, {numeric: true}));
+        for (const file of files) {
+            if (file.startsWith(`${userId}_`) && file.endsWith('.json')) {
+                const filePath = path.join(options.rawOutputDir, file);
+
+                console.log(`⏳ 正在读取分块文件: ${file}`);
+                const data = await fs.readFile(filePath, 'utf-8');
+                fileTweets.push(...JSON.parse(data));
+            }
+        }
+    } catch (err) {
+        console.error('❌ 文件合并失败:', err);
+        throw err;
+    }
+
+    console.log(`📈 总计获取: ${totalFetched} 条`);
+    console.log(`✅ 合并完成，总计加载 ${fileTweets.length} 条原始推文`);
+
+    // 🚨 需要验证数据一致性（可添加检查）
+    if (totalFetched !== fileTweets.length) {
+        console.warn(`⚠️ 警告：请求获取数（${totalFetched}）与文件加载数（${fileTweets.length}）不一致`);
+    }
+
+    // 在获取原始推文后新增回复处理
+    const collectedReplies = collectNestedReplies(fileTweets);
+
+    // 合并原始推文与回复推文
+    const allTweets = [...fileTweets, ...collectedReplies];
+    console.log(`🧩 合并推文：原始 ${fileTweets.length} 条 + 回复 ${collectedReplies.length} 条`);
+
+    return {processedCount: allTweets.length, rawTweets: allTweets};
+}
+
+/**
+ * 递归收集嵌套回复
+ */
+function collectNestedReplies(tweets: any[], maxDepth: number = 5): any[] {
+    const recursiveCollect = (tweetList: any[], currentDepth: number): any[] => {
+        if (currentDepth > maxDepth) return [];
+
+        return tweetList.flatMap(item => {
+            const replies = item.replies || [];
+            return [
+                ...replies,
+                ...recursiveCollect(replies, currentDepth + 1)
+            ];
+        });
+    };
+
+    return recursiveCollect(tweets, 1);
 }
 
 /**
@@ -255,14 +343,18 @@ function mergeAndSaveData(
     // 转换新数据
     console.log('🔄 正在处理原始推文数据...');
     const newData = newTweets
-        .map(tweet => transformTweet(tweet, userId))
-        .filter(t => {
-            if (!t) console.log(`🗑️ 过滤无效数据`);
-            return t !== null;
-        });
+        .map(item => transformTweet(item, userId))
+        .filter((t): t is EnrichedTweet => t !== null);
+
+    // 无效数据统计
+    const invalidCount = newTweets.length - newData.length;
 
     console.log(`\n=== 数据合并统计 ===`);
     console.log(`📥 新数据: ${newData.length} 条（原始 ${newTweets.length} 条）`);
+    console.log(`🗑️ 过滤无效数据: ${invalidCount} 条`);
+    if (invalidCount > 0) {
+        console.log(`⚠️ 提示: 发现 ${invalidCount} 条无效数据，请检查 rawOutputPath 或调整转换逻辑`);
+    }
     console.log(`📚 历史数据: ${existingData.length} 条`);
 
     // 合并去重
@@ -283,27 +375,35 @@ function mergeAndSaveData(
 /**
  * 推文数据转换
  */
-function transformTweet(tweet: any, userId: string): EnrichedTweet | null {
+function transformTweet(item: any, userId: string): EnrichedTweet | null {
     // 安全访问工具函数
-    const safeGet = (path: string, defaultValue: any = '') => get(tweet, path, defaultValue);
+    const safeGet = (path: string, defaultValue: any = '') => get(item, path, defaultValue);
 
     /* 核心字段提取 */
     // 推文内容（使用完整文本字段）
-    const fullText = safeGet('raw.result.legacy.fullText', safeGet('text', ''));
-
+    const fullText = safeGet('tweet.legacy.fullText', '');
+    // 过滤转推
+    if (fullText.trim().startsWith("RT @")) {
+        return null;
+    }
     // 推文发布时间（处理Twitter特殊日期格式）
-    const createdAt = safeGet('raw.result.legacy.createdAt', safeGet('text', '1970-01-01T00:00:00'));
-    const publishTime = formatDateToLocalISO(createdAt);
+    const createdAt = safeGet('tweet.legacy.createdAt', '');
+    const beijingTime = convertToBeijingTime(createdAt);
+    if (!beijingTime.isValid()) {
+        console.log('🕒 时间解析失败:', createdAt);
+        return null;
+    }
+    const publishTime = beijingTime.format('YYYY-MM-DDTHH:mm:ss');
 
     /* 用户信息提取 */
     const user = {
-        screenName: safeGet('user.legacy.screenName', 'unknown'),
-        name: safeGet('user.legacy.name', 'Unknown User')
+        screenName: safeGet('user.legacy.screenName', ''),
+        name: safeGet('user.legacy.name', '')
     };
 
     /* 多媒体内容处理 */
     // 图片提取（类型为photo的媒体）
-    const mediaItems = safeGet('raw.result.legacy.extendedEntities.media', []);
+    const mediaItems = safeGet('tweet.legacy.extendedEntities.media', []);
     const images = mediaItems
         .filter((m: any) => m.type === 'photo')
         .map((m: any) => m.mediaUrlHttps)
@@ -321,45 +421,14 @@ function transformTweet(tweet: any, userId: string): EnrichedTweet | null {
         .filter(Boolean);
 
     /* 链接处理 */
-    const expandUrls = safeGet('raw.result.legacy.entities.urls', [])
+    const expandUrls = safeGet('tweet.legacy.entities.urls', [])
         .map((u: any) => u.expandedUrl)
         .filter(Boolean);
 
     /* 推文URL构造 */
-    const tweetId = safeGet('raw.result.legacy.idStr', safeGet('id'));
+    const tweetId = safeGet('tweet.legacy.idStr', '');
     if (!tweetId || !user.screenName) {
-        console.log(`❌ 无效推文结构：${JSON.stringify({
-            // 核心标识字段
-            invalidFields: {
-                'raw.result.legacy.idStr': safeGet('raw.result.legacy.idStr'),
-                'id': safeGet('id'),
-                'user.legacy.screenName': safeGet('user.legacy.screenName'),
-
-                // 关键内容字段
-                'hasFullText': !!safeGet('raw.result.legacy.fullText'),
-                'hasText': !!safeGet('text'),
-
-                // 时间相关
-                'createdAtExists': !!safeGet('raw.result.legacy.createdAt'),
-
-                // 用户身份验证
-                'currentUserIdMatch': safeGet('user.rest_id') === userId,
-
-                // 媒体相关
-                'hasMedia': mediaItems.length > 0,
-                'hasEntitiesUrls': safeGet('raw.result.legacy.entities.urls', []).length > 0,
-
-                // 结构完整性
-                'rawResultExists': !!safeGet('raw.result'),
-                'legacyObjectExists': !!safeGet('raw.result.legacy')
-            },
-            metadata: {
-                tweetId: tweetId,
-                currentUserId: userId,
-                receivedUserRestId: safeGet('user.rest_id'),
-                timestamp: new Date().toISOString()
-            }
-        }, null, 2)}`);
+        console.log(`❌ 无效推文结构`);
         return null;
     }
     const tweetUrl = `https://x.com/${user.screenName}/status/${tweetId}`;
@@ -371,7 +440,7 @@ function transformTweet(tweet: any, userId: string): EnrichedTweet | null {
         videos,
         expandUrls,
         tweetUrl,
-        fullText, // 替换换行符
+        fullText,
         publishTime
     };
 }
@@ -408,8 +477,8 @@ async function* tweetCursor(
         }
 
         // 处理数据
-        for (const tweet of tweets) {
-            yield tweet;
+        for (const item of tweets) {
+            yield item;
             if (++count >= params.limit) {
                 console.log(`⏹️ 终止原因：达到数量限制（${params.limit}）`);
                 return;
@@ -419,4 +488,11 @@ async function* tweetCursor(
         cursor = newCursor;
 
     } while (true);
+}
+
+/**
+ * 转换到北京时间
+ */
+function convertToBeijingTime(dateStr: string): dayjs.Dayjs {
+    return dayjs(dateStr).tz(TZ_BEIJING);
 }

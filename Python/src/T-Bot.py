@@ -341,9 +341,10 @@ class UploadManager:
         """发送文本消息到 Telegram 和飞书"""
         # 生成基础文本（复用原有逻辑）
         screen_name = item['user']['screen_name']
+        media_type = item['media_type']
         publish_time = datetime.fromisoformat(item['publish_time']).strftime("%Y-%m-%d %H:%M:%S")
         url = item['url']
-        base_text = f"#{screen_name}\n{publish_time}\n{url}"
+        base_text = f"#{screen_name} #{media_type}\n{publish_time}\n{url}"
 
         # 截断逻辑（保持原有处理）
         max_length = Config.TELEGRAM_LIMITS['caption']

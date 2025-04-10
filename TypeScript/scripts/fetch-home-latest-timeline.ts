@@ -1,150 +1,382 @@
+import path from 'path';
 import {XAuthClient} from "./utils";
-import {formatDateToLocalISO} from "./utils";
 import {get} from "lodash";
-import dayjs from "dayjs";
-import fs from "fs-extra";
-import type {TweetApiUtilsData} from "twitter-openapi-typescript";
+import dayjs from 'dayjs';
+import timezone from 'dayjs/plugin/timezone';
+import utc from 'dayjs/plugin/utc';
+import fs from 'fs-extra';
 
-console.log(`----- ----- ----- ----- fetch-home-latest-timeline begin ----- ----- ----- -----`);
-const client = await XAuthClient();
+// 配置时区插件
+dayjs.extend(utc);
+dayjs.extend(timezone);
+const TZ_BEIJING = 'Asia/Shanghai';
 
-console.log(`🔄 开始获取首页最新时间线...`);
-const resp = await client.getTweetApi().getHomeLatestTimeline({
-    count: 100,
-});
-console.log(`✅ 成功获取首页最新时间线，原始推文数量：${resp.data.data.length}条`);
+// 类型定义 ------------------------------------------------------------------------
+interface EnrichedTweet {
+    user: { screenName: string; name: string };
+    images: string[];
+    videos: string[];
+    expandUrls: string[];
+    tweetUrl: string;
+    fullText: string;
+    publishTime: string;
+    userIdStr: string;
+}
 
-// 过滤出原创推文
-const originalTweets = resp.data.data.filter((tweet) => {
-    return !tweet.referenced_tweets || tweet.referenced_tweets.length === 0;
-});
+interface ProcessConfig {
+    /** 输出目录，默认'../tweets' */
+    outputDir?: string;
+    /** API请求间隔(ms)，默认5000 */
+    interval?: number;
+    /** 关注用户配置文件路径 */
+    followingPath?: string;
+}
 
-// 获取关注用户列表
-const followingConfig = `../../Python/config/followingUser.json`;
-console.log(`📂 读取关注用户配置文件：${followingConfig}...`);
-const followingJson = JSON.parse(await fs.readFile(followingConfig, 'utf-8'));
-const restIds = followingJson.map(item => item.restId);
-console.log(`👥 共获取到${restIds.length}个关注用户`);
+// 主流程控制器 --------------------------------------------------------------------
+export async function processHomeTimeline(client: any, config: ProcessConfig = {}) {
+    const startTime = Date.now();
+    const {
+        outputDir = '../tweets',
+        interval = 5000,
+        followingPath = '../../Python/config/followingUser.json',
+    } = config;
 
-const rows: TweetApiUtilsData[] = [];
-console.log("🔧 开始处理推文数据，过滤非关注用户及1天外的推文...");
+    console.log('===== [BEGIN] 首页时间线处理流程 =====\n');
+    console.log('🕒 当前北京时间:', dayjs().tz(TZ_BEIJING).format('YYYY-MM-DD HH:mm:ss'));
 
-// 输出所有原创推文的访问地址
-originalTweets.forEach((tweet) => {
-    const isQuoteStatus = get(tweet, "raw.result.legacy.isQuoteStatus");
-    if (isQuoteStatus) {
-        return;
+    try {
+        // 阶段1: 初始化配置
+        logStep('1. 初始化配置');
+        const [followingIds, timeThreshold] = await Promise.all([
+            loadFollowingUsers(followingPath),
+            calculateTimeThreshold(24)
+        ]);
+        console.log('⏰ 时间阈值:', timeThreshold.format('YYYY-MM-DD HH:mm:ss'));
+
+        // 阶段2: 分页获取数据
+        logStep('2. 分页获取数据');
+        const {rawTweets, pageCount} = await paginateTweets(client, timeThreshold, interval);
+
+        // 阶段3: 数据处理
+        logStep('3. 数据处理');
+        const {validTweets, counter} = processTweets(rawTweets, followingIds, timeThreshold);
+
+        // 阶段4: 数据存储
+        logStep('4. 数据存储');
+        await saveTweets(validTweets, outputDir);
+
+        // 最终统计
+        const timeCost = ((Date.now() - startTime) / 1000).toFixed(1);
+        console.log('\n✅ 处理完成!');
+        console.log(`
+🎉 处理完成！
+📊 总请求次数: ${pageCount}
+📦 总原始数据: ${rawTweets.length}
+✅ 有效推文数: ${validTweets.length}
+🚫 过滤转推: ${counter.retweets}
+🙅 非关注用户: ${counter.nonFollowing}
+⌛ 超时数据: ${counter.outOfRange}
+⏱ 耗时(秒): ${timeCost}
+`);
+
+    } catch (error) {
+        console.error('\n❌ 流程异常终止:', error.message);
+        throw error;
     }
-    const fullText = get(tweet, "raw.result.legacy.fullText", "RT @");
-    if (fullText?.includes("RT @")) {
-        return;
+}
+
+// 核心逻辑函数 --------------------------------------------------------------------
+/** 分页获取推文（含时间过滤） */
+async function paginateTweets(client: any, threshold: dayjs.Dayjs, interval: number) {
+    console.log('⏳ 开始分页抓取，终止条件: 最后一条推文时间 <', threshold.format('YYYY-MM-DD HH:mm:ss'));
+    let cursor: string | undefined;
+    let rawTweets: any[] = [];
+    let pageCount = 0;
+    let lastTweetTime: dayjs.Dayjs | null = null;
+
+    do {
+        pageCount++;
+        const {tweets, newCursor} = await fetchTweetPage(client, cursor, interval, pageCount);
+        cursor = newCursor;
+
+        // 记录最后一条时间
+        if (tweets.length > 0) {
+            const lastCreatedAt = get(tweets[tweets.length - 1], 'tweet.legacy.createdAt');
+            lastTweetTime = convertToBeijingTime(lastCreatedAt);
+            console.log(`最后一条时间: ${lastTweetTime?.format('YYYY-MM-DD HH:mm:ss')}`);
+        }
+
+        // 合并数据（不过滤）
+        rawTweets.push(...tweets);
+
+        // 终止条件：无更多数据 或 最后一条超时
+        const shouldContinue = cursor && (!lastTweetTime || lastTweetTime.isAfter(threshold));
+        console.log(`分页查询标志位: ${shouldContinue}`);
+
+    } while (cursor && lastTweetTime?.isAfter(threshold));
+
+    console.log(`📦 分页完成，共请求 ${pageCount} 次，获取原始数据 ${rawTweets.length} 条`);
+    return {rawTweets, pageCount};
+}
+
+/** 处理单页数据 */
+async function fetchTweetPage(
+    client: any,
+    cursor: string | undefined,
+    interval: number,
+    pageNum: number,
+) {
+    console.log(`\n=== 分页请求 #${pageNum} ===`);
+    console.log('⏱️ 请求时间:', dayjs().tz(TZ_BEIJING).format('YYYY-MM-DD HH:mm:ss'));
+    if (cursor) console.log(`📍 当前游标: ${cursor}`);
+
+    // 速率限制
+    if (pageNum > 1) {
+        console.log(`⏸️ 等待 ${interval}ms...`);
+        await new Promise(resolve => setTimeout(resolve, interval));
     }
 
-    // 过滤非关注用户的推文
-    const userIdStr = get(tweet, "raw.result.legacy.userIdStr");
-    const isFollowing = restIds.includes(userIdStr);
-    if (!isFollowing) {
-        return;
-    }
+    // API请求
+    const response = await client.getTweetApi().getHomeLatestTimeline({
+        count: 100,
+        cursor
+    });
 
-    const createdAt = get(tweet, "raw.result.legacy.createdAt");
-    // return if more than 1 days
-    if (dayjs().diff(dayjs(createdAt), "day") > 1) {
-        return;
-    }
-    const publishTime = formatDateToLocalISO(createdAt);
-    const screenName = get(tweet, "user.legacy.screenName");
-    const tweetUrl = `https://x.com/${screenName}/status/${get(
-        tweet,
-        "raw.result.legacy.idStr"
-    )}`;
-    // 提取用户信息
-    const user = {
-        screenName: get(tweet, "user.legacy.screenName"),
-        name: get(tweet, "user.legacy.name"),
+    // 提取嵌套回复
+    const originalTweets = response.data?.data || [];
+    const replyTweets = collectNestedReplies(originalTweets, 0);
+    console.log(`↪ 本页数据: 原始 ${originalTweets.length} 条 + 回复 ${replyTweets.length} 条`);
+
+    return {
+        tweets: [...originalTweets, ...replyTweets],
+        newCursor: response.data?.cursor?.bottom?.value
     };
+}
 
-    // 提取图片
-    const mediaItems = get(tweet, "raw.result.legacy.extendedEntities.media", []);
-    const images = mediaItems
-        .filter((media: any) => media.type === "photo")
-        .map((media: any) => media.mediaUrlHttps);
+/** 数据处理管道 */
+function processTweets(
+    rawTweets: any[],
+    followingIds: Set<string>,
+    threshold: dayjs.Dayjs,
+) {
+    console.log('\n🔧 开始处理原始数据...');
+    const counter = {retweets: 0, nonFollowing: 0, outOfRange: 0};
+    const validTweets: EnrichedTweet[] = [];
 
-    // 提取视频
-    const videos = mediaItems
-        .filter(
-            (media: any) => media.type === "video" || media.type === "animated_gif"
-        )
-        .map((media: any) => {
-            const variants = get(media, "videoInfo.variants", []);
-            const bestQuality = variants
-                .filter((v: any) => v.contentType === "video/mp4")
+    rawTweets.forEach((item, index) => {
+        // 转换数据
+        const tweet = transformTweet(item);
+        if (!tweet) return;
+
+        // 过滤转推
+        if (tweet.fullText.startsWith('RT @')) {
+            counter.retweets++;
+            return;
+        }
+
+        // 过滤非关注用户
+        if (!followingIds.has(tweet.userIdStr)) {
+            counter.nonFollowing++;
+            return;
+        }
+
+        // 时间过滤
+        const publishTime = dayjs(tweet.publishTime);
+        if (publishTime.isBefore(threshold)) {
+            counter.outOfRange++;
+            return;
+        }
+
+        validTweets.push(tweet);
+    });
+
+    console.log('✅ 数据处理完成');
+    console.log(`→ 有效数据: ${validTweets.length}/${rawTweets.length}`);
+    return {validTweets, counter};
+}
+
+// 工具函数 ------------------------------------------------------------------------
+/** 加载关注用户列表 */
+async function loadFollowingUsers(path: string): Promise<Set<string>> {
+    console.log(`📂 加载关注列表: ${path}`);
+    try {
+        const data = await fs.readJSON(path);
+        const ids = data.map((u: any) => u.restId);
+        console.log(`→ 成功加载 ${ids.length} 个关注用户`);
+        return new Set(ids);
+    } catch (error) {
+        console.error('❌ 加载关注列表失败:', error.message);
+        return new Set();
+    }
+}
+
+/** 收集嵌套回复（最多5层） */
+function collectNestedReplies(tweets: any[], depth: number):
+    any[] {
+    if (depth >= 5) {
+        console.log(`↳ 停止递归，当前深度: ${depth}`);
+        return [];
+    }
+
+    return tweets.flatMap(tweet => {
+        const replies = tweet.replies || [];
+        const nested = collectNestedReplies(replies, depth + 1);
+        return [...replies, ...nested];
+    });
+}
+
+/** 转换原始推文数据 */
+function transformTweet(item: any): EnrichedTweet | null {
+    try {
+        // 关键字段提取
+        const userIdStr = get(item, 'tweet.legacy.userIdStr');
+        const screenName = get(item, 'user.legacy.screenName');
+        const createdAt = get(item, 'tweet.legacy.createdAt');
+
+        if (!userIdStr || !screenName || !createdAt) {
+            console.log('🛑 数据缺失，跳过条目');
+            return null;
+        }
+
+        // 时间转换
+        const beijingTime = convertToBeijingTime(createdAt);
+        if (!beijingTime.isValid()) {
+            console.log('🕒 时间解析失败:', createdAt);
+            return null;
+        }
+
+        const publishTime = beijingTime.format('YYYY-MM-DDTHH:mm:ss');
+
+        // 构造对象
+        return {
+            user: {
+                screenName,
+                name: get(item, 'user.legacy.name') || '未知用户'
+            },
+            images: extractMedia(item, 'photo'),
+            videos: extractVideo(item),
+            expandUrls: extractUrls(item),
+            tweetUrl: `https://x.com/${screenName}/status/${get(item, 'tweet.legacy.idStr')}`,
+            fullText: get(item, 'tweet.legacy.fullText', ''),
+            publishTime,
+            userIdStr
+        };
+
+    } catch (error) {
+        console.error('❌ 数据转换异常:', error.message);
+        return null;
+    }
+}
+
+// 辅助函数 ------------------------------------------------------------------------
+/** 计算时间阈值（当前时间-24小时） */
+function calculateTimeThreshold(hours: number): dayjs.Dayjs {
+    return dayjs().tz(TZ_BEIJING).subtract(hours, 'hour');
+}
+
+/** 转换到北京时间 */
+function convertToBeijingTime(dateStr: string): dayjs.Dayjs {
+    return dayjs(dateStr).tz(TZ_BEIJING);
+}
+
+/** 提取图片链接 */
+function extractMedia(item: any, type: 'photo'): string[] {
+    return get(item, 'tweet.legacy.extendedEntities.media', [])
+        .filter((m: any) => m.type === type)
+        .map((m: any) => m.mediaUrlHttps);
+}
+
+/** 提取视频链接 */
+function extractVideo(item: any): string[] {
+    return get(item, 'tweet.legacy.extendedEntities.media', [])
+        .filter((m: any) => ['video', 'animated_gif'].includes(m.type))
+        .map((m: any) => {
+            const variants = get(m, 'videoInfo.variants', []);
+            const best = variants
+                .filter((v: any) => v.contentType === 'video/mp4')
                 .sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0))[0];
-            return bestQuality?.url;
+            return best?.url;
         })
         .filter(Boolean);
-
-    // 提取扩展的url
-    const urlItems = get(tweet, "raw.result.legacy.entities.urls", []);
-    const expandUrls = urlItems
-        .map((urls: any) => urls.expandedUrl);
-
-    rows.push({
-        // @ts-ignore
-        user,
-        images,
-        videos,
-        expandUrls,
-        tweetUrl,
-        fullText,
-        publishTime,
-    });
-});
-console.log(`⏳ 初步筛选出符合关注用户且最近1天的原创推文，共${rows.length}条`);
-
-const path = require('path');
-const outputPath = `../tweets/${dayjs().format("YYYY-MM")}/${dayjs().format("YYYY-MM-DD")}.json`;
-const dirPath = path.dirname(outputPath);
-
-console.log(`📂 检查输出目录是否存在：${dirPath}`);
-if (!fs.existsSync(dirPath)) {
-    console.log(`📂 目录不存在，创建目录：${dirPath}`);
-    fs.mkdirSync(dirPath, {recursive: true});
 }
 
-let existingRows: TweetApiUtilsData[] = [];
-
-// 如果文件存在，读取现有内容
-if (fs.existsSync(outputPath)) {
-    console.log(`📂 读取现有数据文件：${outputPath}`);
-    existingRows = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
-    console.log(`📋 现有文件中共有${existingRows.length}条记录`);
+/** 提取扩展链接 */
+function extractUrls(item: any): string[] {
+    return get(item, 'tweet.legacy.entities.urls', [])
+        .map((u: any) => u.expandedUrl)
+        .filter(Boolean);
 }
 
-console.log(`🔄 合并现有数据（${existingRows.length}条）与新增数据（${rows.length}条）...`);
-const allRows = [...existingRows, ...rows];
-console.log(`📈 去重前总数据量：${allRows.length}条`);
+/** 数据存储到对应日期的文件 */
+async function saveTweets(tweets: EnrichedTweet[], outputDir: string) {
+    console.log('\n📂 开始数据存储...');
+    const dateGroups = tweets.reduce((acc, tweet) => {
+        const dateKey = dayjs(tweet.publishTime).tz(TZ_BEIJING).format('YYYY-MM-DD');
+        (acc[dateKey] || (acc[dateKey] = [])).push(tweet);
+        return acc;
+    }, {} as Record<string, EnrichedTweet[]>);
 
-// 通过 tweetUrl 去重
-const uniqueRows = Array.from(
-    new Map(allRows.map(row => [row.tweetUrl, row])).values()
-);
-console.log(`♻️ 去重后剩余数据量：${uniqueRows.length}条`);
+    console.log(`→ 发现 ${Object.keys(dateGroups).length} 个日期分组`);
 
-console.log("📊 按推文ID升序排序数据...");
-const sortedRows = uniqueRows.sort((a, b) => {
-    const urlA = new URL(a.tweetUrl);
-    const urlB = new URL(b.tweetUrl);
-    const idA = urlA.pathname.split('/').pop() || '';
-    const idB = urlB.pathname.split('/').pop() || '';
-    return idA.localeCompare(idB); // Twitter ID 本身就包含时间信息，可以直接比较
-});
+    for (const [dateStr, group] of Object.entries(dateGroups)) {
+        const monthDir = dayjs(dateStr).format('YYYY-MM');
+        const filePath = path.join(outputDir, monthDir, `${dateStr}.json`);
+        await saveGroup(filePath, group);
+    }
+}
 
-console.log(`💾 正在写入数据到文件：${outputPath}`);
-fs.writeFileSync(
-    outputPath,
-    JSON.stringify(sortedRows, null, 2)
-);
-console.log(`🎉 数据写入完成，共保存${sortedRows.length}条推文数据`);
+/** 保存单个日期组数据 */
+async function saveGroup(filePath: string, newTweets: EnrichedTweet[]) {
+    try {
+        fs.ensureDirSync(path.dirname(filePath));
 
-console.log(`----- ----- ----- ----- fetch-home-latest-timeline end ----- ----- ----- -----`);
+        // 读取现有数据
+        const existing: EnrichedTweet[] = fs.existsSync(filePath)
+            ? await fs.readJSON(filePath)
+            : [];
+        console.log(`读取现有数据: ${existing.length} 条 (${filePath})`);
+
+        // 合并去重
+        const uniqueMap = new Map<string, EnrichedTweet>();
+        [...existing, ...newTweets].forEach(t => {
+            const key = `${t.tweetUrl}_${t.publishTime}`;
+            if (!uniqueMap.has(key)) uniqueMap.set(key, t);
+        });
+
+        // 过滤非当日数据(升序排序)
+        const targetDate = path.basename(filePath, '.json');
+        const filtered = Array.from(uniqueMap.values())
+            .filter(t => dayjs(t.publishTime).tz(TZ_BEIJING).format('YYYY-MM-DD') === targetDate)
+            .sort((a, b) => dayjs(a.publishTime).unix() - dayjs(b.publishTime).unix());
+
+        // 写入文件
+        const dataToSave = filtered.map(({userIdStr, ...rest}) => rest);
+        await fs.writeJSON(filePath, dataToSave, {spaces: 2});
+        console.log(`✔ 保存成功: ${targetDate}.json (新增 ${newTweets.length} → 总计 ${dataToSave.length})`);
+
+    } catch (error) {
+        console.error(`❌ 保存失败 (${filePath}):`, error.message);
+    }
+}
+
+// 日志工具 ------------------------------------------------------------------------
+function logStep(message: string) {
+    console.log(`\n## ${message} ##`);
+}
+
+// 启动入口 ------------------------------------------------------------------------
+export async function main() {
+    try {
+        const client = await XAuthClient();
+        await processHomeTimeline(client, {
+            outputDir: '../tweets',
+            interval: 5000,
+            followingPath: '../../Python/config/followingUser.json',
+        });
+    } catch (error) {
+        console.error('❌ 全局异常:', error);
+        process.exit(1);
+    }
+}
+
+main();

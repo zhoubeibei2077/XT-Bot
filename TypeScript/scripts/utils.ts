@@ -71,33 +71,3 @@ export const login = async (AUTH_TOKEN: string) => {
 
     return {client, legacy};
 }
-
-export function formatDateToLocalISO(createdAt: string): string {
-    const date = new Date(createdAt);
-
-    // 如果是无效日期，直接返回原始参数
-    if (isNaN(date.getTime())) {
-        return createdAt;
-    }
-
-    const options: Intl.DateTimeFormatOptions = {
-        timeZone: 'Asia/Shanghai',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        hour12: false,
-    };
-
-    const formatter = new Intl.DateTimeFormat('en-CN', options);
-    const parts = formatter.formatToParts(date);
-
-    const components: Record<string, string> = {};
-    parts.forEach(({type, value}) => {
-        components[type] = value;
-    });
-
-    return `${components.year}-${components.month}-${components.day}T${components.hour}:${components.minute}:${components.second}`;
-}
