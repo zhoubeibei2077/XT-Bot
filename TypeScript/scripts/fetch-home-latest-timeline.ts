@@ -1,3 +1,5 @@
+import '../utils/logger';
+import {cleanupLogger} from '../utils/logger';
 import path from 'path';
 import {XAuthClient} from "./utils";
 import {get} from "lodash";
@@ -104,6 +106,25 @@ async function paginateTweets(client: any, threshold: dayjs.Dayjs, interval: num
             const lastCreatedAt = get(tweets[tweets.length - 1], 'tweet.legacy.createdAt');
             lastTweetTime = convertToBeijingTime(lastCreatedAt);
             console.log(`最后一条时间: ${lastTweetTime?.format('YYYY-MM-DD HH:mm:ss')}`);
+        }
+
+        // 保存响应信息逻辑
+        const timestamp = dayjs().format('YYYYMMDD-HHmmss');
+        const saveDir = path.resolve(__dirname, '../resp/respHomeTimeline');
+        const filename = `page_${pageCount}_${timestamp}.json`;
+        try {
+            if (!fs.existsSync(saveDir)) {
+                fs.mkdirSync(saveDir, {recursive: true});
+            }
+            const filePath = path.join(saveDir, filename);
+            await fs.promises.writeFile(
+                filePath,
+                JSON.stringify(tweets, (_, v) => typeof v === 'bigint' ? v.toString() : v, 2),
+                'utf-8'
+            );
+            console.log(`💾 第 ${pageCount} 页响应已保存至：${filename}`);
+        } catch (e) {
+            console.error(`❌ 保存响应失败：`, e instanceof Error ? e.message : e);
         }
 
         // 合并数据（不过滤）
@@ -375,7 +396,11 @@ export async function main() {
         });
     } catch (error) {
         console.error('❌ 全局异常:', error);
-        process.exit(1);
+        process.exitCode = 1;
+    } finally {
+        // 统一资源清理
+        await cleanupLogger();
+        process.exit();
     }
 }
 

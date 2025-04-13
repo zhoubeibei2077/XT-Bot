@@ -346,14 +346,23 @@ function mergeAndSaveData(
         .map(item => transformTweet(item, userId))
         .filter((t): t is EnrichedTweet => t !== null);
 
+    // 统计转推数量
+    const retweetCount = newTweets.filter(item => {
+        const fullText = get(item, 'tweet.legacy.fullText', '').trim();
+        return fullText.startsWith("RT @");
+    }).length;
+
     // 无效数据统计
     const invalidCount = newTweets.length - newData.length;
 
     console.log(`\n=== 数据合并统计 ===`);
     console.log(`📥 新数据: ${newData.length} 条（原始 ${newTweets.length} 条）`);
-    console.log(`🗑️ 过滤无效数据: ${invalidCount} 条`);
+    console.log(`🗑️ 过滤无效数据: ${invalidCount} 条（转推 ${retweetCount} 条）`);
     if (invalidCount > 0) {
-        console.log(`⚠️ 提示: 发现 ${invalidCount} 条无效数据，请检查 rawOutputPath 或调整转换逻辑`);
+        const hasNonRetweetInvalid = invalidCount !== retweetCount;
+        if (hasNonRetweetInvalid) {
+            console.log(`⚠️ 提示: 发现 ${invalidCount} 条无效数据（其中 ${invalidCount - retweetCount} 条非转推），请检查 rawOutputPath 或调整转换逻辑`);
+        }
     }
     console.log(`📚 历史数据: ${existingData.length} 条`);
 

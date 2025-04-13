@@ -18,7 +18,7 @@ class Config:
     DEFAULT_CONFIG_PATH = "../config/followingUser.json"  # 默认配置文件路径
     DEFAULT_INPUT_DIR = "../../TypeScript/tweets/"        # 默认输入目录
     DEFAULT_OUTPUT_DIR = "../output/"                     # 默认输出目录
-    DEFAULT_LOG_DIR = "../../logs/python/"                # 默认日志目录
+    DEFAULT_LOG_DIR = "../logs/"                # 默认日志目录
 
     # 日期格式
     DATE_FORMAT = "%Y-%m-%d %H:%M:%S"       # 时间戳格式
@@ -36,13 +36,16 @@ def configure_logging():
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
 
+    log_filename = f"python-{datetime.now().strftime('%Y-%m-%d')}.log"
+    log_filepath = os.path.join(log_dir, log_filename)
+
     logging.basicConfig(
         level=logging.INFO,
         format='[%(asctime)s] [%(levelname)-5s] %(message)s',
         datefmt=date_format,
         handlers=[
             logging.StreamHandler(),
-            logging.FileHandler(f'{log_dir}/xbot.log', encoding='utf-8')
+            logging.FileHandler(log_filepath, encoding='utf-8')
         ]
     )
     logger = logging.getLogger(__name__)

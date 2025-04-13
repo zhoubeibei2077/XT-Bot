@@ -78,7 +78,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: network-responses-${{ github.run_id }}  # 唯一标识
-          path: TypeScript/resp/
+          path: |
+            TypeScript/resp/
+            TypeScript/logs/
+            Python/logs/
           retention-days: 7  # 自动清理
 
       - name: Commit and push changes

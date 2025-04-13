@@ -1,3 +1,5 @@
+import '../utils/logger';
+import {cleanupLogger} from '../utils/logger';
 import {processTweetsByScreenName} from './fetch-tweets';
 import {processMediaByScreenName} from './fetch-media';
 import {XAuthClient} from "./utils";
@@ -19,6 +21,11 @@ async function main(screenName) {
 
     } catch (error) {
         console.error('❌ 发生错误:', error instanceof Error ? error.message : error);
+        process.exitCode = 1;
+    } finally {
+        // 统一清理资源
+        await cleanupLogger();
+        process.exit();
     }
 }
 

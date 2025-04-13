@@ -20,7 +20,7 @@ class Config:
     # 文件路径
     DEFAULT_DOWNLOAD_DIR = "../downloads"
     DEFAULT_OUTPUT_DIR = "../output"
-    DEFAULT_LOG_DIR = "../../logs/python/"  # 默认日志目录
+    DEFAULT_LOG_DIR = "../logs/"  # 默认日志目录
 
     # Telegram配置 (保持原始限制)
     TELEGRAM_LIMITS = {
@@ -64,13 +64,16 @@ def configure_logging():
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
 
+    log_filename = f"python-{datetime.now().strftime('%Y-%m-%d')}.log"
+    log_filepath = os.path.join(log_dir, log_filename)
+
     logging.basicConfig(
         level=logging.INFO,
         format='[%(asctime)s] [%(levelname)-5s] %(message)s',
         datefmt=date_format,
         handlers=[
             logging.StreamHandler(),
-            logging.FileHandler(f'{log_dir}/tbot.log', encoding='utf-8')
+            logging.FileHandler(log_filepath, encoding='utf-8')
         ]
     )
     logger = logging.getLogger(__name__)
