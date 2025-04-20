@@ -23,6 +23,8 @@ interface EnrichedTweet {
     fullText: string;
     publishTime: string;
     userIdStr: string;
+    isRetweet: boolean;
+    isQuote: boolean;
 }
 
 interface ProcessConfig {
@@ -32,16 +34,25 @@ interface ProcessConfig {
     interval?: number;
     /** 关注用户配置文件路径 */
     followingPath?: string;
+    /** 是否过滤转推，默认true过滤 */
+    filterRetweets?: boolean;
+    /** 是否过滤引用推文，默认true过滤 */
+    filterQuotes?: boolean;
 }
 
 // 主流程控制器 --------------------------------------------------------------------
 export async function processHomeTimeline(client: any, config: ProcessConfig = {}) {
     const startTime = Date.now();
+
+    // 新增配置合并逻辑
+    const mergedConfig = await mergeConfigurations(config);
     const {
         outputDir = '../tweets',
         interval = 5000,
-        followingPath = '../../Python/config/followingUser.json',
-    } = config;
+        followingPath = '../data/followingUser.json',
+        filterRetweets = true,  // 新增默认值
+        filterQuotes = true      // 新增默认值
+    } = mergedConfig;
 
     console.log('===== [BEGIN] 首页时间线处理流程 =====\n');
     console.log('🕒 当前北京时间:', dayjs().tz(TZ_BEIJING).format('YYYY-MM-DD HH:mm:ss'));
@@ -61,8 +72,15 @@ export async function processHomeTimeline(client: any, config: ProcessConfig = {
 
         // 阶段3: 数据处理
         logStep('3. 数据处理');
-        const {validTweets, counter} = processTweets(rawTweets, followingIds, timeThreshold);
-
+        const {validTweets, counter} = processTweets(
+            rawTweets,
+            followingIds,
+            timeThreshold,
+            {
+                filterRetweets,
+                filterQuotes
+            }
+        );
         // 阶段4: 数据存储
         logStep('4. 数据存储');
         await saveTweets(validTweets, outputDir);
@@ -76,6 +94,7 @@ export async function processHomeTimeline(client: any, config: ProcessConfig = {
 📦 总原始数据: ${rawTweets.length}
 ✅ 有效推文数: ${validTweets.length}
 🚫 过滤转推: ${counter.retweets}
+🚫 过滤引用: ${counter.quotes}
 🙅 非关注用户: ${counter.nonFollowing}
 ⌛ 超时数据: ${counter.outOfRange}
 ⏱ 耗时(秒): ${timeCost}
@@ -85,6 +104,44 @@ export async function processHomeTimeline(client: any, config: ProcessConfig = {
         console.error('\n❌ 流程异常终止:', error.message);
         throw error;
     }
+}
+
+async function mergeConfigurations(cliConfig: ProcessConfig): Promise<ProcessConfig> {
+    // 默认配置
+    const defaultConfig = {
+        outputDir: '../tweets',
+        interval: 5000,
+        followingPath: '../data/followingUser.json',
+        filterRetweets: true,
+        filterQuotes: true
+    };
+
+    // 文件配置
+    let fileConfig = {};
+    try {
+        const configPath = path.resolve(__dirname, '../../config/config.json');
+        fileConfig = await fs.readJSON(configPath);
+        console.log('✅ 加载配置文件成功');
+
+        // 配置项验证
+        if (fileConfig.interval && typeof fileConfig.interval !== 'number') {
+            console.warn('⚠️ 配置文件中 interval 需为数字，已忽略该配置');
+            delete fileConfig.interval;
+        }
+    } catch (e) {
+        if (e.code === 'ENOENT') {
+            console.log('ℹ️ 未找到配置文件，使用默认配置');
+        } else {
+            console.warn('⚠️ 配置文件解析失败:', e.message);
+        }
+    }
+
+    // 合并配置（优先级：CLI参数 > 文件配置 > 默认配置）
+    return {
+        ...defaultConfig,
+        ...fileConfig,
+        ...cliConfig
+    };
 }
 
 // 核心逻辑函数 --------------------------------------------------------------------
@@ -179,9 +236,13 @@ function processTweets(
     rawTweets: any[],
     followingIds: Set<string>,
     threshold: dayjs.Dayjs,
+    config: {
+        filterRetweets: boolean;
+        filterQuotes: boolean;
+    }
 ) {
     console.log('\n🔧 开始处理原始数据...');
-    const counter = {retweets: 0, nonFollowing: 0, outOfRange: 0};
+    const counter = {retweets: 0, quotes: 0, nonFollowing: 0, outOfRange: 0};
     const validTweets: EnrichedTweet[] = [];
 
     rawTweets.forEach((item, index) => {
@@ -190,8 +251,13 @@ function processTweets(
         if (!tweet) return;
 
         // 过滤转推
-        if (tweet.fullText.startsWith('RT @')) {
+        if (config.filterRetweets && tweet.isRetweet) {
             counter.retweets++;
+            return;
+        }
+        // 过滤引用推文
+        if (config.filterQuotes && tweet.isQuote) {
+            counter.quotes++;
             return;
         }
 
@@ -265,6 +331,9 @@ function transformTweet(item: any): EnrichedTweet | null {
             console.log('🕒 时间解析失败:', createdAt);
             return null;
         }
+        const fullText = get(item, 'tweet.legacy.fullText', '');
+        const isRetweet = fullText.startsWith('RT @');
+        const isQuote = get(item, 'tweet.legacy.isQuoteStatus', false);
 
         const publishTime = beijingTime.format('YYYY-MM-DDTHH:mm:ss');
 
@@ -278,9 +347,11 @@ function transformTweet(item: any): EnrichedTweet | null {
             videos: extractVideo(item),
             expandUrls: extractUrls(item),
             tweetUrl: `https://x.com/${screenName}/status/${get(item, 'tweet.legacy.idStr')}`,
-            fullText: get(item, 'tweet.legacy.fullText', ''),
+            fullText,
             publishTime,
-            userIdStr
+            userIdStr,
+            isRetweet,
+            isQuote
         };
 
     } catch (error) {
@@ -371,7 +442,9 @@ async function saveGroup(filePath: string, newTweets: EnrichedTweet[]) {
             .sort((a, b) => dayjs(a.publishTime).unix() - dayjs(b.publishTime).unix());
 
         // 写入文件
-        const dataToSave = filtered.map(({userIdStr, ...rest}) => rest);
+        const dataToSave = filtered.map(
+            ({userIdStr, isRetweet, isQuote, ...rest}) => rest
+        );
         await fs.writeJSON(filePath, dataToSave, {spaces: 2});
         console.log(`✔ 保存成功: ${targetDate}.json (新增 ${newTweets.length} → 总计 ${dataToSave.length})`);
 
@@ -389,11 +462,7 @@ function logStep(message: string) {
 export async function main() {
     try {
         const client = await XAuthClient();
-        await processHomeTimeline(client, {
-            outputDir: '../tweets',
-            interval: 5000,
-            followingPath: '../../Python/config/followingUser.json',
-        });
+        await processHomeTimeline(client);
     } catch (error) {
         console.error('❌ 全局异常:', error);
         process.exitCode = 1;

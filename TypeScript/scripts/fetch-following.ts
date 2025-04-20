@@ -20,8 +20,9 @@ export async function processHomeTimeline() {
         if (!response.data?.user?.restId) {
             throw new Error(`❌ 用户 @${screenName} 存在但无法获取有效ID`);
         }
-
-        const userId = response.data.user.restId;
+        // 用户自身信息
+        const userSelf = response.data.user;
+        const userId = userSelf.restId;
 
         const timestamp = dayjs().format('YYYYMMDD-HHmmss');
         const rawOutputPath = path.join('../resp/respFollowing', `${timestamp}.json`);
@@ -80,6 +81,8 @@ export async function processHomeTimeline() {
         await fs.writeFile(rawOutputPath, JSON.stringify(allUsers, null, 2));
         console.log(`\n🎉 完成！共获取 ${allUsers.length} 个用户`);
 
+        allUsers.unshift(userSelf);
+        console.log(`\n➕ 添加用户自身信息 @${userSelf.legacy?.screenName || screenName}`);
         console.log(`\n🛠️ 开始精简用户数据...`);
 
         const simplifiedUsers = allUsers.map(user => ({
@@ -100,7 +103,9 @@ export async function processHomeTimeline() {
             a.legacy.screenName.localeCompare(b.legacy.screenName)
         );
 
-        const outputPath = `../../Python/config/followingUser.json`;
+        const outputPath = `../data/followingUser.json`;
+        // 确保目录存在
+        fs.ensureDirSync(path.dirname(outputPath));
         await fs.writeFile(outputPath, JSON.stringify(simplifiedUsers, null, 2));
         console.log(`✅ 精简数据完成，已保存至: ${outputPath}`);
 

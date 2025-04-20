@@ -21,15 +21,30 @@ jobs:
           git config --global user.name "GitHub Actions Bot"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
+      - name: Create directories
+        run: |
+          mkdir -p Python/{dataBase,downloads,logs,output}
+          mkdir -p TypeScript/{data,logs,resp,tweets}
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
           bun-version: latest
 
-      - name: Install dependencies
+      - name: Install Bun dependencies
         run: |
           cd TypeScript
           bun install
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Install Python dependencies
+        run: |
+          cd Python
+          pip install -r requirements.txt
 
       - name: Run fetch script
         env:
@@ -39,26 +54,6 @@ jobs:
           cd TypeScript/scripts
           bun run fetch-following.ts
           bun run fetch-home-latest-timeline.ts
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: "3.10"
-
-      - name: Create directories
-        run: |
-          mkdir -p Python/output
-          mkdir -p Python/downloads
-
-      - name: Install dependencies
-        run: |
-          cd Python
-          pip install -r requirements.txt
-
-      - name: Run generate_user_card.py
-        run: |
-          cd Python/src
-          python generate_user_card.py
 
       - name: Run X-Bot.py
         run: |
@@ -79,13 +74,13 @@ jobs:
         with:
           name: network-responses-${{ github.run_id }}  # 唯一标识
           path: |
-            TypeScript/resp/
-            TypeScript/logs/
             Python/logs/
+            TypeScript/logs/
+            TypeScript/resp/
           retention-days: 7  # 自动清理
 
       - name: Commit and push changes
         run: |
-          git add Python/output Python/dataBase Python/config TypeScript/tweets
+          git add Python/dataBase Python/output TypeScript/data TypeScript/tweets
           git commit -m "chore: update user data [skip ci]" || exit 0
           git push

@@ -4,26 +4,27 @@ import logging
 from datetime import datetime, timedelta
 import os
 
+
 # --------------------
 # 配置区
 # --------------------
 class Config:
     # 分片配置
-    MAX_ENTRIES_PER_SHARD = 10000    # 单个分片最大条目数
-    SHARD_DIR = "../dataBase/"       # 分片存储目录
-    FORMAT_SHARDS = True             # 是否格式化分片文件
+    MAX_ENTRIES_PER_SHARD = 10000  # 单个分片最大条目数
+    SHARD_DIR = "../dataBase/"  # 分片存储目录
+    FORMAT_SHARDS = True  # 是否格式化分片文件
     SHARD_PREFIX = "processed_entries_"
 
     # 路径配置
-    DEFAULT_CONFIG_PATH = "../config/followingUser.json"  # 默认配置文件路径
-    DEFAULT_INPUT_DIR = "../../TypeScript/tweets/"        # 默认输入目录
-    DEFAULT_OUTPUT_DIR = "../output/"                     # 默认输出目录
-    DEFAULT_LOG_DIR = "../logs/"                # 默认日志目录
+    DEFAULT_INPUT_DIR = "../../TypeScript/tweets/"  # 默认输入目录
+    DEFAULT_OUTPUT_DIR = "../output/"  # 默认输出目录
+    DEFAULT_LOG_DIR = "../logs/"  # 默认日志目录
 
     # 日期格式
-    DATE_FORMAT = "%Y-%m-%d %H:%M:%S"       # 时间戳格式
-    YEAR_MONTH_DAY = "%Y-%m-%d"             # 年月日格式
-    YEAR_MONTH = "%Y-%m"                    # 年月格式
+    DATE_FORMAT = "%Y-%m-%d %H:%M:%S"  # 时间戳格式
+    YEAR_MONTH_DAY = "%Y-%m-%d"  # 年月日格式
+    YEAR_MONTH = "%Y-%m"  # 年月格式
+
 
 # --------------------
 # 日志配置
@@ -44,18 +45,20 @@ def configure_logging():
         format='[%(asctime)s] [%(levelname)-5s] %(message)s',
         datefmt=date_format,
         handlers=[
-            logging.StreamHandler(),
+            logging.StreamHandler(sys.stdout),
             logging.FileHandler(log_filepath, encoding='utf-8')
         ]
     )
     logger = logging.getLogger(__name__)
     if not os.path.exists(log_dir):
-            logger.info(f"📁 创建日志目录: {log_dir}")
+        logger.info(f"📁 创建日志目录: {log_dir}")
 
     logger.info("🔄 X-Bot 初始化完成")
     return logger
 
+
 logger = configure_logging()
+
 
 # --------------------
 # 分片管理器
@@ -167,6 +170,7 @@ class ShardManager:
         logger.info(f"🔍 已加载历史条目总数: {len(processed)}")
         return processed
 
+
 # --------------------
 # 条目处理器
 # --------------------
@@ -268,6 +272,7 @@ class EntryProcessor:
             return "spaces"
         return None
 
+
 # --------------------
 # 文件管理器
 # --------------------
@@ -301,6 +306,7 @@ class FileManager:
             json.dump(data, f, ensure_ascii=False, indent=2)
         logger.info(f"💾 输出已保存至: {output_path}")
 
+
 # --------------------
 # 核心流程
 # --------------------
@@ -313,13 +319,9 @@ class XBotCore:
         self.file_manager = FileManager()
         self.processed_ids = self.shard_manager.load_processed_entries()
 
-    def process_single_day(self, data_path, config_path, output_path):
+    def process_single_day(self, data_path, output_path):
         """处理单日数据"""
-        logger.info(f"\n{'='*40}\n🔍 开始处理: {os.path.basename(data_path)}")
-
-        # 加载配置
-        config_data = self.file_manager.load_json(config_path)
-        target_users = [u["legacy"]["screenName"] for u in config_data]
+        logger.info(f"\n{'-' * 40}\n🔍 开始处理: {os.path.basename(data_path)}")
 
         # 加载数据
         raw_data = self.file_manager.load_json(data_path)
@@ -327,9 +329,8 @@ class XBotCore:
 
         # 处理条目
         all_new_entries = []
-        for username in target_users:
-            if username not in user_data:
-                continue
+        # 遍历所有用户
+        for username in user_data:
 
             user_info = user_data[username]
 
@@ -351,7 +352,8 @@ class XBotCore:
         # 合并输出
         final_output = self._merge_output(output_path, all_new_entries)
         self.file_manager.save_output(final_output, output_path)
-        logger.info(f"🎉 本日处理完成！新增条目: {len(all_new_entries)}\n{'='*40}\n")
+        logger.info(f"🎉 本日处理完成！新增条目: {len(all_new_entries)}\n{'-' * 40}\n")
+        return len(all_new_entries)
 
     def _organize_user_data(self, raw_data):
         """重组用户数据结构"""
@@ -404,6 +406,7 @@ class XBotCore:
         """获取条目唯一标识"""
         return f"{entry['file_name']}_{entry['user']['screen_name']}_{entry['media_type']}"
 
+
 # --------------------
 # 命令行接口
 # --------------------
@@ -411,15 +414,14 @@ def main():
     core = XBotCore()
     args = sys.argv[1:]  # 获取命令行参数
 
-    # 三参数模式：python X-Bot.py 数据文件 配置文件 输出文件
-    if len(args) == 3:
+    # 指定输出目录：python X-Bot.py 数据文件 输出文件
+    if len(args) == 2:
         data_path = os.path.normpath(args[0])
-        config_path = os.path.normpath(args[1])
-        output_path = os.path.normpath(args[2])
+        output_path = os.path.normpath(args[1])
 
         if os.path.exists(data_path):
             logger.info(f"🔧 自定义模式处理：{data_path}")
-            core.process_single_day(data_path, config_path, output_path)
+            core.process_single_day(data_path, output_path)
         else:
             logger.info(f"⏭️ 跳过不存在的数据文件：{data_path}")
 
@@ -427,9 +429,6 @@ def main():
     elif len(args) == 1:
         data_path = os.path.normpath(args[0])
         current_date = datetime.now()
-
-        # 固定配置文件路径
-        config_path = os.path.normpath(Config.DEFAULT_CONFIG_PATH)
 
         # 生成当天输出路径（与数据文件日期无关）
         output_dir = os.path.normpath(
@@ -441,14 +440,16 @@ def main():
         if os.path.exists(data_path):
             logger.info(f"⚡ 单文件模式处理：{os.path.basename(data_path)}")
             os.makedirs(output_dir, exist_ok=True)
-            core.process_single_day(data_path, config_path, output_path)
+            new_entries_count = core.process_single_day(data_path, output_path)
+            # 返回新增条数
+            print(new_entries_count)
         else:
             logger.info(f"⏭️ 跳过不存在的数据文件：{data_path}")
+            print(0)
 
     # 无参数模式：python X-Bot.py
     elif len(args) == 0:
         current_date = datetime.now()
-        config_path = os.path.normpath(Config.DEFAULT_CONFIG_PATH)
 
         logger.info("🤖 自动模式：处理最近一周数据")
         for day_offset in reversed(range(8)):  # 包含今天共8天
@@ -470,21 +471,23 @@ def main():
             if os.path.exists(data_path):
                 logger.info(f"🔍 正在处理 {target_date.strftime(Config.YEAR_MONTH_DAY)} 数据...")
                 os.makedirs(output_dir, exist_ok=True)
-                core.process_single_day(data_path, config_path, output_path)
+                core.process_single_day(data_path, output_path)
             else:
                 logger.info(f"⏭️ 跳过不存在的数据文件：{data_filename}")
 
     # 错误参数处理
     else:
         logger.error("❗ 参数错误！支持以下模式：")
-        logger.info("1. 全参数模式：脚本 + 数据文件 + 配置文件 + 输出文件")
+        logger.info("1. 全参数模式：脚本 + 数据文件 + 输出文件")
         logger.info("2. 单文件模式：脚本 + 数据文件（输出到当天目录）")
         logger.info("3. 自动模式：仅脚本（处理最近一周数据）")
         logger.info("示例：")
-        logger.info("python X-Bot.py ../../TypeScript/tweets/2000-01/2000-01-01.json ../config/followingUser.json ../output/2000-01/2000-01-01.json")
+        logger.info(
+            "python X-Bot.py ../../TypeScript/tweets/2000-01/2000-01-01.json ../output/2000-01/2000-01-01.json")
         logger.info("python X-Bot.py ../../TypeScript/tweets/user/xxx.json")
         logger.info("python X-Bot.py")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     try:

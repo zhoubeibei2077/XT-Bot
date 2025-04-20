@@ -1,4 +1,4 @@
-name: INI-T-Bot
+name: INI-XT-Bot
 
 on:
   workflow_dispatch:      # 允许手动触发
@@ -12,63 +12,73 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
         with:
-          token: ${{ secrets.GH_TOKEN }}  # 使用你设置的 secret
+          token: ${{ secrets.GH_TOKEN }}
 
       - name: Setup Git
         run: |
           git config --global user.name "GitHub Actions Bot"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Set up Python
+      - name: Create directories
+        run: |
+          mkdir -p Python/{dataBase,downloads,logs,output}
+          mkdir -p TypeScript/{data,logs,resp,tweets}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install Bun dependencies
+        run: |
+          cd TypeScript
+          bun install
+
+      - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: "3.10"
 
-      - name: Create directories
-        run: |
-          mkdir -p Python/output
-          mkdir -p Python/downloads
-
-      - name: Install dependencies
+      - name: Install Python dependencies
         run: |
           cd Python
           pip install -r requirements.txt
 
-      - name: Get SCREEN NAME
-        id: get-user-id
+      - name: Get REDIS CONFIG
         env:
           REDIS_CONFIG: ${{ secrets.REDIS_CONFIG }}
         run: |
-          cd Python/src
-          SCREEN_NAME=$(python redis_screen_name.py)
-          echo "SCREEN_NAME=$SCREEN_NAME" >> $GITHUB_ENV
+          cd Python/utils
+          python get_redis_config.py
 
-      - name: Run X-Bot.py
+      - name: Run fetch script
+        env:
+          AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
         run: |
-          cd Python/src
-          python X-Bot.py "../../TypeScript/tweets/user/$SCREEN_NAME.json"
+          cd TypeScript/scripts
+          bun run fetch-tweets-media.ts
 
-      - name: Run T-Bot.py
+      - name: Run INI-XT-Bot.py
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
           LARK_KEY: ${{ secrets.LARK_KEY }}
         run: |
           cd Python/src
-          python T-Bot.py
+          python INI-XT-Bot.py
 
       - name: Upload Response Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: network-responses-${{ github.run_id }}  # 唯一标识
           path: |
-            TypeScript/resp/
-            TypeScript/logs/
             Python/logs/
+            TypeScript/logs/
+            TypeScript/resp/
           retention-days: 7  # 自动清理
 
       - name: Commit and push changes
         run: |
-          git add Python/output Python/dataBase Python/config TypeScript/tweets
+          git add config Python/dataBase Python/output TypeScript/data TypeScript/tweets
           git commit -m "chore: update user data [skip ci]" || exit 0
           git push

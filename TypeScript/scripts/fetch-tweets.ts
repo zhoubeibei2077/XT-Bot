@@ -30,12 +30,20 @@ interface EnrichedTweet {
 }
 
 interface ProcessConfig {
-    /** 输出目录路径，默认 './output' */
+    /** 内容类型（tweets/media），默认tweets */
+    contentType?: 'tweets' | 'media';
+    /** 输出目录路径，默认 '../resp/respTweets' */
     outputDir?: string;
     /** 是否强制刷新用户信息，默认 false */
     forceRefresh?: boolean;
     /** 请求间隔时间（毫秒），默认 5000 */
     interval?: number;
+    /** 分页限制数量，默认不限制 */
+    limit?: number;
+    /** 是否过滤转推，默认true过滤 */
+    filterRetweets?: boolean;
+    /** 是否过滤引用推文，默认true过滤 */
+    filterQuotes?: boolean;
 }
 
 // 主函数 -------------------------------------------------------------------------
@@ -55,12 +63,17 @@ export async function processTweetsByScreenName(
     console.log(`🚀 开始处理用户 @${screenName}`);
 
     try {
-        // 合并配置参数
+        // 步骤0: 设置环境配置 ---------------------------------------------------------
+        const mergedConfig = await loadAndMergeConfig(config);
+
         const {
-            outputDir = '../resp/respTweets',
-            forceRefresh = false,
-            interval = 5000
-        } = config;
+            outputDir,
+            forceRefresh,
+            interval,
+            limit,
+            filterRetweets,
+            filterQuotes
+        } = mergedConfig;
 
         // 步骤1: 获取用户ID ---------------------------------------------------------
         console.log('🔍 正在查询用户信息...');
@@ -83,8 +96,10 @@ export async function processTweetsByScreenName(
             userInfo.userId,
             client,
             {
+                contentType: mergedConfig.contentType,
                 interval,
-                rawOutputDir
+                rawOutputDir,
+                limit
             }
         );
 
@@ -93,7 +108,9 @@ export async function processTweetsByScreenName(
         const finalData = mergeAndSaveData(
             finalOutputPath,
             rawTweets,
-            userInfo.userId
+            userInfo.userId,
+            filterRetweets,
+            filterQuotes
         );
 
         // 最终统计 -----------------------------------------------------------------
@@ -116,6 +133,60 @@ export async function processTweetsByScreenName(
 }
 
 // 核心工具函数 -------------------------------------------------------------------
+/**
+ * 加载并合并配置（优先级：CLI参数 > 文件配置 > 默认值）
+ * @param cliConfig 命令行配置
+ * @returns 合并后的配置对象
+ */
+async function loadAndMergeConfig(cliConfig: ProcessConfig): Promise<ProcessConfig> {
+    // 默认配置
+    const defaultConfig: ProcessConfig = {
+        contentType: 'tweets',
+        outputDir: '../resp/respTweets',
+        forceRefresh: false,
+        interval: 5000,
+        limit: Infinity,
+        filterRetweets: true,
+        filterQuotes: true
+    };
+
+    // 尝试读取文件配置
+    let fileConfig: ProcessConfig = {};
+    try {
+        const configPath = path.resolve(__dirname, '../../config/config.json');
+        fileConfig = await fs.readJSON(configPath);
+        console.log('✅ 配置文件加载成功');
+
+        // 有效性过滤（防止无效类型覆盖）
+        fileConfig = {
+            interval: Number.isInteger(fileConfig?.interval) ? fileConfig.interval : undefined,
+            filterRetweets: typeof fileConfig?.filterRetweets === 'boolean' ? fileConfig.filterRetweets : undefined,
+            filterQuotes: typeof fileConfig?.filterQuotes === 'boolean' ? fileConfig.filterQuotes : undefined,
+        };
+    } catch (e) {
+        const error = e as Error & { code?: string };
+        if (error.code === 'ENOENT') {
+            console.log('ℹ️ 未找到配置文件');
+        } else {
+            console.log('⚠️ 配置文件解析失败:', error.message);
+        }
+    }
+
+    // 合并配置（优先级：cliConfig > fileConfig > defaultConfig）
+    const merged = {
+        ...defaultConfig,
+        ...fileConfig,
+        ...cliConfig
+    } as ProcessConfig;
+
+    // 动态设置输出目录
+    if (merged.contentType === 'media' && !cliConfig.outputDir) {
+        merged.outputDir = '../resp/respMedia';
+    }
+
+    return merged;
+}
+
 /**
  * 获取/缓存用户信息
  */
@@ -163,8 +234,10 @@ async function processTweets(
     userId: string,
     client: any,
     options: {
+        contentType: 'tweets' | 'media';
         interval: number;
         rawOutputDir: string;
+        limit: number;
     }
 ) {
     let pageCount = 0;
@@ -178,7 +251,7 @@ async function processTweets(
 
         // 添加请求开始日志
         console.log(`\n=== 第 ${pageCount} 次请求 ===`);
-        console.log(`🕒 请求时间: ${new Date().toISOString()}`);
+        console.log('⏱️ 请求时间:', dayjs().tz(TZ_BEIJING).format('YYYY-MM-DD HH:mm:ss'));
         console.log(`🎯 目标用户ID: ${userId}`);
         if (cursor) console.log(`📍 当前游标: ${cursor}`);
 
@@ -188,12 +261,19 @@ async function processTweets(
             await new Promise(r => setTimeout(r, options.interval));
         }
 
+        const apiHandler = {
+            tweets: {
+                method: 'getUserTweets',
+                params: {userId, cursor, count: 20}
+            },
+            media: {
+                method: 'getUserMedia',
+                params: {userId, cursor, count: 20}
+            }
+        }[options.contentType];
+
         // 执行请求
-        const response = await client.getTweetApi().getUserTweets({
-            userId,
-            cursor,
-            count: 20
-        });
+        const response = await client.getTweetApi()[apiHandler.method](apiHandler.params);
 
         // 添加响应日志
         const responseCount = response.data?.data?.length || 0;
@@ -237,7 +317,7 @@ async function processTweets(
     };
 
     // 修改后的分页生成器
-    const tweetGenerator = tweetCursor({limit: Infinity}, requestHandler);
+    const tweetGenerator = tweetCursor({limit: options.limit}, requestHandler);
 
     // 添加进度统计
     let totalFetched = 0;
@@ -327,7 +407,9 @@ function collectNestedReplies(tweets: any[], maxDepth: number = 5): any[] {
 function mergeAndSaveData(
     outputPath: string,
     newTweets: any[],
-    userId: string
+    userId: string,
+    filterRetweets: boolean,
+    filterQuotes: boolean
 ): EnrichedTweet[] {
     // 读取历史数据
     let existingData: EnrichedTweet[] = [];
@@ -343,27 +425,60 @@ function mergeAndSaveData(
     // 转换新数据
     console.log('🔄 正在处理原始推文数据...');
     const newData = newTweets
-        .map(item => transformTweet(item, userId))
+        .map(item => transformTweet(item, userId, filterRetweets, filterQuotes))
         .filter((t): t is EnrichedTweet => t !== null);
 
-    // 统计转推数量
-    const retweetCount = newTweets.filter(item => {
+    // 统计转推数量（无论是否启用过滤）
+    const totalRetweets = newTweets.filter(item => {
         const fullText = get(item, 'tweet.legacy.fullText', '').trim();
         return fullText.startsWith("RT @");
     }).length;
 
-    // 无效数据统计
+    // 统计引用推文（无论是否启用过滤）
+    const totalQuotes = newTweets.filter(item =>
+        get(item, 'tweet.legacy.isQuoteStatus', false)
+    ).length;
+
+    // 实际生效的过滤数量
+    const actualRetweets = filterRetweets ? totalRetweets : 0;
+    const actualQuotes = filterQuotes ? totalQuotes : 0;
+
+    // 无效数据总数
     const invalidCount = newTweets.length - newData.length;
 
+    // 其他无效数据（总无效数 - 实际过滤数）
+    const otherInvalid = invalidCount - actualRetweets - actualQuotes;
+
     console.log(`\n=== 数据合并统计 ===`);
-    console.log(`📥 新数据: ${newData.length} 条（原始 ${newTweets.length} 条）`);
-    console.log(`🗑️ 过滤无效数据: ${invalidCount} 条（转推 ${retweetCount} 条）`);
-    if (invalidCount > 0) {
-        const hasNonRetweetInvalid = invalidCount !== retweetCount;
-        if (hasNonRetweetInvalid) {
-            console.log(`⚠️ 提示: 发现 ${invalidCount} 条无效数据（其中 ${invalidCount - retweetCount} 条非转推），请检查 rawOutputPath 或调整转换逻辑`);
-        }
+    console.log(`📥 原始数据: ${newTweets.length} 条`);
+    console.log(`✅ 有效数据: ${newData.length} 条`);
+    console.log(`🗑️ 过滤总数: ${invalidCount} 条`);
+
+    // 动态生成过滤原因描述
+    const filterReasons = [
+        actualRetweets > 0 && `转推 ${actualRetweets} 条`,
+        actualQuotes > 0 && `引用 ${actualQuotes} 条`,
+        otherInvalid > 0 && `其他 ${otherInvalid} 条`
+    ].filter(Boolean).join(' + ') || '无过滤';
+
+    console.log(`   ├── 过滤原因: ${filterReasons}`);
+
+    // 显示配置状态
+    console.log(`   ├── 当前配置:`);
+    console.log(`   │   ${filterRetweets ? '▶' : '⦿'} 转推过滤: ${filterRetweets ? '启用' : '禁用'} (共${totalRetweets}条)`);
+    console.log(`   │   ${filterQuotes ? '▶' : '⦿'} 引用过滤: ${filterQuotes ? '启用' : '禁用'} (共${totalQuotes}条)`);
+
+    // 详细提示
+    if (otherInvalid < 0) {
+        console.log(`   └── ⚠️ 数据异常: 无效数出现负值（${otherInvalid}），请检查统计逻辑`);
+    } else if (otherInvalid > 0) {
+        console.log(`   └── 注意: 发现 ${otherInvalid} 条非常规过滤数据，可能原因：
+      - 推文结构不完整
+      - 未知的数据类型`);
+    } else if (invalidCount > 0) {
+        console.log(`   └── ✔️ 所有过滤均符合预期配置（${actualRetweets + actualQuotes}条）`);
     }
+
     console.log(`📚 历史数据: ${existingData.length} 条`);
 
     // 合并去重
@@ -384,7 +499,12 @@ function mergeAndSaveData(
 /**
  * 推文数据转换
  */
-function transformTweet(item: any, userId: string): EnrichedTweet | null {
+function transformTweet(
+    item: any,
+    userId: string,
+    filterRetweets: boolean,
+    filterQuotes: boolean
+): EnrichedTweet | null {
     // 安全访问工具函数
     const safeGet = (path: string, defaultValue: any = '') => get(item, path, defaultValue);
 
@@ -392,7 +512,12 @@ function transformTweet(item: any, userId: string): EnrichedTweet | null {
     // 推文内容（使用完整文本字段）
     const fullText = safeGet('tweet.legacy.fullText', '');
     // 过滤转推
-    if (fullText.trim().startsWith("RT @")) {
+    if (filterRetweets && fullText.trim().startsWith("RT @")) {
+        return null;
+    }
+    // 过滤引用推文
+    const isQuoteStatus = safeGet('tweet.legacy.isQuoteStatus', false);
+    if (filterQuotes && isQuoteStatus) {
         return null;
     }
     // 推文发布时间（处理Twitter特殊日期格式）
