@@ -1,9 +1,7 @@
 import {TwitterOpenApi} from "twitter-openapi-typescript";
 import axios from "axios";
-import {TwitterApi} from 'twitter-api-v2';
 
 export const _xClient = async (TOKEN: string) => {
-    // console.log("🚀 ~ const_xClient= ~ TOKEN:", TOKEN)
     const resp = await axios.get("https://x.com/manifest.json", {
         headers: {
             cookie: `auth_token=${TOKEN}`,
@@ -16,8 +14,6 @@ export const _xClient = async (TOKEN: string) => {
         acc[name] = value;
         return acc;
     }, {});
-
-    // console.log("🚀 ~ cookieObj ~ cookieObj:", JSON.stringify(cookieObj, null, 2))
 
     const api = new TwitterOpenApi();
     const client = await api.getClientFromCookies({...cookieObj, auth_token: TOKEN});

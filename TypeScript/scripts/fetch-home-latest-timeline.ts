@@ -122,12 +122,6 @@ async function mergeConfigurations(cliConfig: ProcessConfig): Promise<ProcessCon
         const configPath = path.resolve(__dirname, '../../config/config.json');
         fileConfig = await fs.readJSON(configPath);
         console.log('✅ 加载配置文件成功');
-
-        // 配置项验证
-        if (fileConfig.interval && typeof fileConfig.interval !== 'number') {
-            console.warn('⚠️ 配置文件中 interval 需为数字，已忽略该配置');
-            delete fileConfig.interval;
-        }
     } catch (e) {
         if (e.code === 'ENOENT') {
             console.log('ℹ️ 未找到配置文件，使用默认配置');

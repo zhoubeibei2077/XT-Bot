@@ -80,6 +80,7 @@ LARK_KEY      # 飞书机器人key(可选)https://open.feishu.cn/open-apis/bot/v
 
 - 在同步指定用户全量推文流程前，请先在Actions面板停用XT-Bot.yml
 - 或者使用`sh/`目录下`INI-XT-Bot.sh`(macOS)脚本执行相关流程操作，使用前需修改`REPO="your_username/XT-Bot"`
+- 由于Twitter API请求限制，同步指定用户全量推文流程可能存在失败情况，请勿频繁执行
 
 ## 数据存储 🔒
 

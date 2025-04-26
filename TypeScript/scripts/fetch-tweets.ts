@@ -156,13 +156,6 @@ async function loadAndMergeConfig(cliConfig: ProcessConfig): Promise<ProcessConf
         const configPath = path.resolve(__dirname, '../../config/config.json');
         fileConfig = await fs.readJSON(configPath);
         console.log('✅ 配置文件加载成功');
-
-        // 有效性过滤（防止无效类型覆盖）
-        fileConfig = {
-            interval: Number.isInteger(fileConfig?.interval) ? fileConfig.interval : undefined,
-            filterRetweets: typeof fileConfig?.filterRetweets === 'boolean' ? fileConfig.filterRetweets : undefined,
-            filterQuotes: typeof fileConfig?.filterQuotes === 'boolean' ? fileConfig.filterQuotes : undefined,
-        };
     } catch (e) {
         const error = e as Error & { code?: string };
         if (error.code === 'ENOENT') {

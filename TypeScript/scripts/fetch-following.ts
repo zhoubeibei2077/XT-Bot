@@ -49,6 +49,9 @@ export async function processHomeTimeline() {
                 cursor,
                 count: 20
             });
+            if (!resp?.data?.data || !Array.isArray(resp.data.data)) {
+                throw new Error("DATA_INVALID: 用户列表数据格式错误");
+            }
 
             // 提取有效用户数据
             const rawItems = get(resp, 'data.data', []);
@@ -121,8 +124,12 @@ export async function main() {
     try {
         await processHomeTimeline();
     } catch (error) {
-        console.error('❌ 全局异常:', error);
-        process.exitCode = 1;
+        if (error.message.startsWith("DATA_INVALID")) {
+            console.warn("⚠️ 数据异常，跳过处理");
+        } else {
+            console.error("❌ 全局异常:", error.message);
+            process.exitCode = 1;
+        }
     } finally {
         // 统一资源清理
         await cleanupLogger();
