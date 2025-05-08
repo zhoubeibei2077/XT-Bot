@@ -50,6 +50,24 @@ LARK_KEY      # 飞书机器人key(可选)https://open.feishu.cn/open-apis/bot/v
 - 支持相关参数配置请求
 - 自动推送媒体到Telegram Bot
 
+> 补充: Github Action的 Schedule 运行不准时的解决办法
+```
+修改 .github/workflows/XT-Bot.yml，删除下面内容
+schedule:
+  - cron: '20,50 * * * *'  # 每30分钟运行
+
+使用Cloudflare Worker来定时执行
+1.代码参考 
+TypeScript/utils/cloudflare-trigger.js
+2.参数配置 Settings > Variables and Secrets
+- GITHUB_USER   # GitHub用户名
+- REPO_NAME     # GitHub仓库名
+- GITHUB_PAT    # GitHub API Token
+- WORKFLOW_NAME # Github Action名称(XT-Bot.yml)
+3.定时配置 Settings > Trigger Events
+- 添加Cron表达式  # 20,50 * * * *
+```
+
 ### 手动初始化流程 [`INI-XT-Bot.yml`]
 
 同步指定用户全量推文（支持多用户） 在 config/config.json 中添加用户信息，执行相关流程操作
