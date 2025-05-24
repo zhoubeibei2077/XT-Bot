@@ -2,40 +2,45 @@ import sys
 import json
 import os
 import requests
-import logging
+import telegram
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Dict, Any, List
-import telegram
+
+# 将项目根目录添加到模块搜索路径
+_project_root = Path(__file__).resolve().parent.parent
+sys.path.append(str(_project_root))
+from utils.log_utils import LogUtils
 
 
 # --------------------------
 # 配置模块
 # --------------------------
 class Config:
-    """全局配置类 (保持原始参数)"""
-    # 日志配置
-    DATE_FORMAT = "%Y-%m-%d %H:%M:%S"  # 时间戳格式
+    """全局配置类"""
+    # 时间格式
+    MESSAGE_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+    INFO_DATE_FORMAT = "%Y-%m-%dT%H:%M:%S"
 
     # 文件路径
     DEFAULT_DOWNLOAD_DIR = "../downloads"
     DEFAULT_OUTPUT_DIR = "../output"
-    DEFAULT_LOG_DIR = "../logs/"  # 默认日志目录
 
-    # Telegram配置 (保持原始限制)
+    # Telegram配置
     TELEGRAM_LIMITS = {
         'images': 10 * 1024 * 1024,  # 10MB
         'videos': 50 * 1024 * 1024,  # 50MB
-        'caption': 1024  # 保持原始截断逻辑
+        'caption': 1024  # 消息截断长度
     }
 
     # 业务参数
-    MAX_DOWNLOAD_ATTEMPTS = 10  # 保持原始重试次数
+    MAX_DOWNLOAD_ATTEMPTS = 10  # 重试次数
+    ERROR_TRUNCATE = 50  # 错误信息截断长度
     NOTIFICATION_TRUNCATE = 200  # 通知消息截断长度
 
     @classmethod
     def get_env_vars(cls) -> Dict[str, str]:
-        """环境变量获取 (保持原始变量名)"""
+        """环境变量获取"""
         return {
             'bot_token': os.getenv('BOT_TOKEN'),
             'chat_id': os.getenv('CHAT_ID'),
@@ -44,7 +49,7 @@ class Config:
 
 
 # --------------------------
-# 异常类 (保持原始自定义异常)
+# 异常类
 # --------------------------
 class FileTooLargeError(Exception):
     """文件大小超过平台限制异常"""
@@ -56,49 +61,20 @@ class MaxAttemptsError(Exception):
     pass
 
 
-# --------------------
-# 日志配置
-# --------------------
-def configure_logging():
-    """配置日志格式和级别"""
-    log_dir = Config.DEFAULT_LOG_DIR
-    date_format = Config.DATE_FORMAT
-
-    if not os.path.exists(log_dir):
-        os.makedirs(log_dir)
-
-    log_filename = f"python-{datetime.now().strftime('%Y-%m-%d')}.log"
-    log_filepath = os.path.join(log_dir, log_filename)
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format='[%(asctime)s] [%(levelname)-5s] %(message)s',
-        datefmt=date_format,
-        handlers=[
-            logging.StreamHandler(sys.stdout),
-            logging.FileHandler(log_filepath, encoding='utf-8')
-        ]
-    )
-    logger = logging.getLogger(__name__)
-    if not os.path.exists(log_dir):
-        logger.info(f"📁 创建日志目录: {log_dir}")
-
-    logger.info("🔄 T-Bot 初始化完成")
-    return logger
-
-
-logger = configure_logging()
+# 引入日志模块
+logger = LogUtils().get_logger()
+logger.info("🔄 T-Bot 初始化完成")
 
 
 # --------------------------
-# 通知模块 (保持原始飞书逻辑)
+# 通知模块
 # --------------------------
 class Notifier:
-    """通知处理器 (保持原始飞书集成)"""
+    """通知处理器"""
 
     @staticmethod
     def send_lark_message(message: str) -> bool:
-        """发送普通飞书消息（无告警前缀）"""
+        """发送普通飞书消息"""
         lark_key = Config.get_env_vars()['lark_key']
         if not lark_key:
             return False
@@ -107,7 +83,7 @@ class Notifier:
         try:
             payload = {
                 "msg_type": "text",
-                "content": {"text": f"📢 动态更新\n{message}"}  # 自定义友好前缀
+                "content": {"text": f"📢 动态更新\n{message}"}
             }
             response = requests.post(webhook_url, json=payload, timeout=10)
             response.raise_for_status()
@@ -119,11 +95,11 @@ class Notifier:
 
     @staticmethod
     def send_lark_alert(message: str) -> bool:
-        """发送飞书通知 (保持原始截断逻辑)"""
+        """发送飞书通知"""
         if not Config.get_env_vars()['lark_key']:
             return False
 
-        # 保持原始消息截断
+        # 消息截断
         truncated_msg = f"{message[:Config.NOTIFICATION_TRUNCATE]}..." if len(
             message) > Config.NOTIFICATION_TRUNCATE else message
         webhook_url = f"https://open.feishu.cn/open-apis/bot/v2/hook/{Config.get_env_vars()['lark_key']}"
@@ -143,10 +119,10 @@ class Notifier:
 
 
 # --------------------------
-# 文件处理模块 (保持原始JSON操作)
+# 文件处理模块
 # --------------------------
 class FileProcessor:
-    """文件处理器 (保持原始JSON r+模式)"""
+    """文件处理器"""
 
     def __init__(self, json_path: str, download_dir: str):
         self.json_path = Path(json_path)
@@ -154,12 +130,12 @@ class FileProcessor:
         self._ensure_dirs()
 
     def _ensure_dirs(self) -> None:
-        """目录创建 (保持原始逻辑)"""
+        """目录创建"""
         self.download_path.mkdir(parents=True, exist_ok=True)
         logger.info(f"📂 下载目录已就绪: {self.download_path}")
 
     def load_data(self) -> List[Dict[str, Any]]:
-        """加载JSON数据 (保持原始r+模式)"""
+        """加载JSON数据"""
         try:
             with self.json_path.open('r+', encoding='utf-8') as f:
                 data = json.load(f)
@@ -170,7 +146,7 @@ class FileProcessor:
             raise
 
     def save_data(self, data: List[Dict[str, Any]]) -> None:
-        """保存JSON数据 (保持原始截断方式)"""
+        """保存JSON数据"""
         try:
             with self.json_path.open('r+', encoding='utf-8') as f:
                 f.seek(0)
@@ -182,18 +158,18 @@ class FileProcessor:
 
 
 # --------------------------
-# 下载模块 (保持原始重试逻辑)
+# 下载模块
 # --------------------------
 class DownloadManager:
-    """下载管理器 (保持原始重试计数器位置)"""
+    """下载管理器"""
 
     @classmethod
     def process_item(cls, item: Dict[str, Any], processor: FileProcessor) -> None:
-        """处理单个文件下载 (保持特殊类型处理)"""
+        """处理单个文件下载"""
         if item.get('is_downloaded'):
             return
 
-        # 保持原始特殊类型处理
+        # 特殊类型处理
         if item.get('media_type') in ['spaces', 'broadcasts']:
             item.update({
                 "is_downloaded": True,
@@ -201,14 +177,14 @@ class DownloadManager:
                     "success": True,
                     "size": 0,
                     "size_mb": 0,
-                    "timestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+                    "timestamp": datetime.now().strftime(Config.INFO_DATE_FORMAT),
                     "download_attempts": 0
                 }
             })
             logger.info(f"⏭ 跳过特殊类型下载: {item['file_name']}")
             return
 
-        # 保持原始重试计数器位置
+        # 重试计数器位置
         download_info = item.setdefault('download_info', {})
         current_attempts = download_info.get('download_attempts', 0)
 
@@ -217,7 +193,7 @@ class DownloadManager:
             item['upload_info'] = cls._build_error_info(
                 MaxAttemptsError("连续下载失败10次"),
                 "max_download_attempts",
-                existing_info=item.get('upload_info', {})  # 关键：传递已有信息
+                existing_info=item.get('upload_info', {})
             )
             return
 
@@ -231,13 +207,13 @@ class DownloadManager:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
 
-            # 更新下载状态 (保持原始数据结构)
+            # 更新下载状态
             file_size = os.path.getsize(file_path)
             download_info.update({
                 "success": True,
                 "size": file_size,
                 "size_mb": round(file_size / 1024 / 1024, 2),
-                "timestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+                "timestamp": datetime.now().strftime(Config.INFO_DATE_FORMAT),
                 "download_attempts": 0  # 重置计数器
             })
             item['is_downloaded'] = True
@@ -245,16 +221,20 @@ class DownloadManager:
 
         except Exception as e:
             download_info['download_attempts'] = current_attempts + 1
-            error_msg = f"✗ 下载失败: {item['file_name']} - {str(e)}"
+            # error错误信息进行截取
+            error_msg = f"✗ 下载失败: {item['file_name']} - {str(e)[:Config.ERROR_TRUNCATE]}"
             logger.error(error_msg)
+            # debug查看完整的错误信息
+            debug_msg = f"✗ 下载失败: {item['file_name']} - {str(e)}"
+            logger.debug(debug_msg)
 
             if download_info['download_attempts'] >= Config.MAX_DOWNLOAD_ATTEMPTS:
                 item['upload_info'] = {
                     "success": False,
                     "error_type": "max_download_attempts",
                     "message": str(e),
-                    "timestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
-                    "notification_sent": False  # 标记未通知，后续统一处理
+                    "timestamp": datetime.now().strftime(Config.INFO_DATE_FORMAT),
+                    "notification_sent": False
                 }
 
     @classmethod
@@ -262,14 +242,14 @@ class DownloadManager:
             cls,
             error: Exception,
             error_type: str,
-            existing_info: Optional[Dict[str, Any]] = None  # 传入已有的 upload_info
+            existing_info: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """构建错误信息时保留原有 notification_sent 状态"""
         # 如果已有错误信息且包含时间戳，则复用
         if existing_info and "timestamp" in existing_info:
             timestamp = existing_info["timestamp"]
         else:
-            timestamp = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")  # 新时间戳
+            timestamp = datetime.now().strftime(Config.INFO_DATE_FORMAT)
         # 如果已有信息，则继承 notification_sent，否则初始化为 False
         notification_sent = existing_info.get("notification_sent", False) if existing_info else False
 
@@ -278,15 +258,15 @@ class DownloadManager:
             "error_type": error_type,
             "message": str(error),
             "timestamp": timestamp,
-            "notification_sent": notification_sent  # 保留或初始化
+            "notification_sent": notification_sent
         }
 
 
 # --------------------------
-# 上传模块 (保持原始截断逻辑)
+# 上传模块
 # --------------------------
 class UploadManager:
-    """上传管理器 (保持原始caption截断方式)"""
+    """上传管理器"""
 
     def __init__(self):
         env_vars = Config.get_env_vars()
@@ -297,12 +277,12 @@ class UploadManager:
         self.chat_id = env_vars['chat_id']
 
     def process_item(self, item: Dict[str, Any], processor: FileProcessor) -> None:
-        """处理文件上传 (保持特殊类型处理)"""
+        """处理文件上传"""
         if not self._should_upload(item):
             return
 
         try:
-            # 处理特殊类型 (保持原始逻辑)
+            # 处理特殊类型
             if item.get('media_type') in ['spaces', 'broadcasts']:
                 message_id = self._send_text_message(item)
             else:
@@ -325,12 +305,12 @@ class UploadManager:
         error_type = upload_info.get('error_type')
 
         if error_type in ['file_too_large', 'max_download_attempts']:
-
-            # 添加通知逻辑
+            # 判断通知标识
             if not upload_info.get('notification_sent'):
+                # 发送告警信息
                 self._send_unrecoverable_alert(item, error_type)
-                upload_info['notification_sent'] = True  # 标记已通知
-
+                # 标记已通知
+                upload_info['notification_sent'] = True
             logger.warning(f"⏭ 跳过不可恢复的错误: {item['file_name']} ({error_type})")
             return False
         # 特殊类型直接上传
@@ -345,20 +325,21 @@ class UploadManager:
             "🔴 推送失败\n"
             f"文件名: {item['file_name']}\n"
             f"类型: {error_type}\n"
-            f"错误: {item['upload_info']['message'][:Config.NOTIFICATION_TRUNCATE]}"
+            # 截取错误信息
+            f"错误: {item['upload_info']['message'][:Config.ERROR_TRUNCATE]}"
         )
         Notifier.send_lark_alert(alert_msg)
 
     def _send_text_message(self, item: Dict[str, Any]) -> int:
         """发送文本消息到 Telegram 和飞书"""
-        # 生成基础文本（复用原有逻辑）
+        # 生成基础文本
         screen_name = item['user']['screen_name']
         media_type = item['media_type']
-        publish_time = datetime.fromisoformat(item['publish_time']).strftime("%Y-%m-%d %H:%M:%S")
+        publish_time = datetime.fromisoformat(item['publish_time']).strftime(Config.MESSAGE_DATE_FORMAT)
         url = item['url']
         base_text = f"#{screen_name} #{media_type}\n{publish_time}\n{url}"
 
-        # 截断逻辑（保持原有处理）
+        # 截断逻辑
         max_length = Config.TELEGRAM_LIMITS['caption']
         if len(base_text) > max_length:
             truncated = base_text[:max_length - 3] + "..."
@@ -371,17 +352,17 @@ class UploadManager:
 
         # 同时发送到飞书（如果配置）
         if Config.get_env_vars()['lark_key']:
-            success = Notifier.send_lark_message(truncated)  # 调用新方法
+            success = Notifier.send_lark_message(truncated)
             if success:
                 logger.info(f"✓ 动态消息已同步至飞书")
         return msg.message_id
 
     def _send_media_file(self, item: Dict[str, Any], processor: FileProcessor) -> int:
-        """发送媒体文件 (保持原始大小校验)"""
+        """发送媒体文件"""
         file_path = processor.download_path / item['file_name']
         caption = self._build_caption(item)
 
-        # 保持原始大小校验
+        # 文件大小校验
         media_type = 'images' if item['media_type'] == 'images' else 'videos'
         file_size = os.path.getsize(file_path)
         if file_size > Config.TELEGRAM_LIMITS[media_type]:
@@ -399,13 +380,13 @@ class UploadManager:
         return msg.message_id
 
     def _build_caption(self, item: Dict[str, Any]) -> str:
-        """构建caption (保持原始优先级截断)"""
+        """构建caption"""
         user_info = f"#{item['user']['screen_name']} {item['user']['name']}"
-        publish_time = datetime.fromisoformat(item['publish_time']).strftime("%Y-%m-%d %H:%M:%S")
+        publish_time = datetime.fromisoformat(item['publish_time']).strftime(Config.MESSAGE_DATE_FORMAT)
         base_info = f"{user_info}\n{publish_time}"
-        remaining = Config.TELEGRAM_LIMITS['caption'] - len(base_info) - 1  # 保持原始计算方式
+        remaining = Config.TELEGRAM_LIMITS['caption'] - len(base_info) - 1
 
-        # 保持原始截断逻辑
+        # 截断逻辑
         text = item['full_text']
         if len(text) > remaining:
             truncated = text[:remaining - 3] + "..."
@@ -420,11 +401,11 @@ class UploadManager:
         return {
             "success": True,
             "message_id": message_id,
-            "timestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+            "timestamp": datetime.now().strftime(Config.INFO_DATE_FORMAT)
         }
 
     def _handle_upload_error(self, error: Exception, item: Dict[str, Any]) -> None:
-        """错误处理 (精确匹配通知规则)"""
+        """错误处理"""
         # 错误类型判断
         if isinstance(error, FileTooLargeError):
             error_type = 'file_too_large'
@@ -437,7 +418,7 @@ class UploadManager:
                 f"错误详情: {str(error)[:Config.NOTIFICATION_TRUNCATE]}"
             )
 
-        # 更新错误信息（保持数据结构统一）
+        # 更新错误信息
         item['upload_info'] = self._build_error_info(error, error_type)
 
         # 重置下载状态（允许重试）
@@ -446,21 +427,21 @@ class UploadManager:
 
     @staticmethod
     def _build_error_info(error: Exception, error_type: str) -> Dict[str, Any]:
-        """构建错误信息 (保持原始字段)"""
+        """构建错误信息"""
         return {
             "success": False,
             "error_type": error_type,
             "message": str(error),
-            "timestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
-            "notification_sent": False  # 保持原始通知标记
+            "timestamp": datetime.now().strftime(Config.INFO_DATE_FORMAT),
+            "notification_sent": False
         }
 
 
 # --------------------------
-# 主流程 (保持原始批量处理逻辑)
+# 主流程
 # --------------------------
 def process_single(json_path: str, download_dir: str = Config.DEFAULT_DOWNLOAD_DIR) -> None:
-    """处理单个文件 (保持原始异常处理)"""
+    """处理单个文件"""
     try:
         logger.info(f"\n{'-' * 40}\n🔍 开始处理: {json_path}")
         processor = FileProcessor(json_path, download_dir)
@@ -470,7 +451,7 @@ def process_single(json_path: str, download_dir: str = Config.DEFAULT_DOWNLOAD_D
         upload_manager = UploadManager()
 
         for item in data:
-            # 保持原始处理顺序：先下载再上传
+            # 处理顺序：先下载再上传
             if not item.get('is_downloaded'):
                 download_manager.process_item(item, processor)
 
@@ -487,9 +468,9 @@ def process_single(json_path: str, download_dir: str = Config.DEFAULT_DOWNLOAD_D
 
 
 def batch_process(days: int = 7) -> None:
-    """批量处理 (保持原始日期回溯逻辑)"""
+    """批量处理"""
     base_dir = Path(Config.DEFAULT_OUTPUT_DIR)
-    for i in range(days, -1, -1):  # 保持原始倒序处理
+    for i in range(days, -1, -1):  # 倒序处理
         target_date = datetime.now() - timedelta(days=i)
         date_str = target_date.strftime("%Y-%m-%d")
         json_path = base_dir / f"{date_str[:7]}/{date_str}.json"
@@ -511,10 +492,10 @@ def main():
         batch_process()
     else:
         logger.error("错误：参数数量不正确。")
-        logger.info("使用方法：python T-Bot.py [<JSON文件路径> <下载目录>]")
-        logger.info("示例：")
-        logger.info("使用参数：python T-Bot.py ../output/2000-01/2000-01-01.json ../downloads(默认)")
-        logger.info("使用默认：python T-Bot.py")
+        logger.error("使用方法：python T-Bot.py [<JSON文件路径> <下载目录>]")
+        logger.error("示例：")
+        logger.error("使用参数：python T-Bot.py ../output/2000-01/2000-01-01.json ../downloads(默认)")
+        logger.error("使用默认：python T-Bot.py")
         sys.exit(1)
 
 
@@ -523,7 +504,7 @@ if __name__ == "__main__":
         main()
         logger.info("🏁 所有处理任务已完成！")
     except KeyboardInterrupt:
-        logger.info("⏹️ 用户中断操作")
+        logger.warning("⏹️ 用户中断操作")
         sys.exit(0)
     except Exception as e:
         logger.error(f"💥 未处理的异常: {str(e)}")

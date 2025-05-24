@@ -1,5 +1,5 @@
 #!/bin/bash
-# GitHub Actions 自动化控制器(macOS)
+# GitHub Actions 自动化控制器
 # 需要安装 GitHub CLI (gh) 并登录 (gh auth login)
 
 # 配置区
@@ -49,6 +49,7 @@ handle_manual_workflow() {
   echo "✅ Run ID: ${RUN_ID}"
 
   # 启动日志监控
+  if [[ "$(uname)" == "Darwin" ]]; then
   echo "📜 启动日志监控窗口..."
   osascript <<EOD
 tell application "Terminal"
@@ -57,6 +58,10 @@ tell application "Terminal"
   set current settings of tab1 to settings set "${TERMINAL_THEME}"
 end tell
 EOD
+  else
+    # 非macOS系统自行扩展
+    echo ""
+  fi
 
   # 监控运行状态（最长2小时）
   echo "⏳ 监控运行状态（最长2小时）..."
@@ -86,14 +91,14 @@ EOD
 
   # 下载产物
   echo "📦 下载到集中存储目录..."
-  gh run download ${RUN_ID} -n "network-responses-${RUN_ID}" -D "${ARTIFACTS_DIR}/${RUN_ID}" 2>&1
+  gh run download ${RUN_ID} -n "workflow_${RUN_ID}" -D "${ARTIFACTS_DIR}/${RUN_ID}" 2>&1
 
   # 结果验证
   local RESP_DIR="${ARTIFACTS_DIR}/${RUN_ID}/"
   if [[ -d "${RESP_DIR}" ]]; then
     echo "✅ 文件已保存至：${RESP_DIR}"
   else
-    echo "⚠️  目录结构异常：${ARTIFACTS_DIR}/${RUN_ID}"
+    echo "⚠️ "
     exit 5
   fi
 }

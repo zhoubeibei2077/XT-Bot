@@ -360,7 +360,7 @@ async function processTweets(
     console.log(`📈 总计获取: ${totalFetched} 条`);
     console.log(`✅ 合并完成，总计加载 ${fileTweets.length} 条原始推文`);
 
-    // 🚨 需要验证数据一致性（可添加检查）
+    // 🚨 需要验证数据一致性
     if (totalFetched !== fileTweets.length) {
         console.warn(`⚠️ 警告：请求获取数（${totalFetched}）与文件加载数（${fileTweets.length}）不一致`);
     }
@@ -517,7 +517,7 @@ function transformTweet(
     const createdAt = safeGet('tweet.legacy.createdAt', '');
     const beijingTime = convertToBeijingTime(createdAt);
     if (!beijingTime.isValid()) {
-        console.log('🕒 时间解析失败:', createdAt);
+        console.warn('🕒 时间解析失败:', createdAt);
         return null;
     }
     const publishTime = beijingTime.format('YYYY-MM-DDTHH:mm:ss');
@@ -555,7 +555,7 @@ function transformTweet(
     /* 推文URL构造 */
     const tweetId = safeGet('tweet.legacy.idStr', '');
     if (!tweetId || !user.screenName) {
-        console.log(`❌ 无效推文结构`);
+        console.warn(`❌ 无效推文结构`);
         return null;
     }
     const tweetUrl = `https://x.com/${user.screenName}/status/${tweetId}`;

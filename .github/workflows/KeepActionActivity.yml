@@ -15,6 +15,7 @@ jobs:
           token: ${{ secrets.GH_TOKEN }}
 
       - name: Commit & Push XT-Bot
+        if: github.event_name == 'schedule'
         run: |
           git config --global user.name "GitHub Actions Bot"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
