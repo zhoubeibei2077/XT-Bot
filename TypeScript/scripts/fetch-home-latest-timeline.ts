@@ -146,11 +146,25 @@ async function paginateTweets(client: any, threshold: dayjs.Dayjs, interval: num
     let rawTweets: any[] = [];
     let pageCount = 0;
     let lastTweetTime: dayjs.Dayjs | null = null;
+    let emptyCount = 0;
 
     do {
         pageCount++;
         const {tweets, newCursor} = await fetchTweetPage(client, cursor, interval, pageCount);
         cursor = newCursor;
+
+        // 处理空页情况
+        if (tweets.length === 0) {
+            emptyCount++;
+            console.log(`⚠️ 空响应计数: ${emptyCount}/3`);
+            if (emptyCount >= 3) {
+                console.log("⏹️ 终止原因：连续3次空响应");
+                break;
+            }
+            continue; // 跳过后续处理
+        } else {
+            emptyCount = 0; // 重置空页计数器
+        }
 
         // 记录最后一条时间
         if (tweets.length > 0) {
