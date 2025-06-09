@@ -297,11 +297,32 @@ async function loadFollowingUsers(path: string): Promise<Set<string>> {
     try {
         const data = await fs.readJSON(path);
         const ids = data.map((u: any) => u.restId);
+        const extraIds = await loadExtraRestIds();
         console.log(`→ 成功加载 ${ids.length} 个关注用户`);
-        return new Set(ids);
+        return new Set([...ids, ...extraIds]);
     } catch (error) {
         console.error('❌ 加载关注列表失败:', error.message);
         return new Set();
+    }
+}
+
+/** 加载额外临时用户(可选) */
+async function loadExtraRestIds(): Promise<string[]> {
+    const extraIdsPath = path.resolve(__dirname, '../data/restId.txt');
+    try {
+        if (!fs.existsSync(extraIdsPath)) {
+            return [];
+        }
+        const content = await fs.readFile(extraIdsPath, 'utf-8');
+        const extraIds = content
+            .split(/\r?\n/)
+            .map(line => line.trim())
+            .filter(line => line.length > 0);
+        console.log(`→ 读取 ${extraIds.length} 个临时用户`);
+        return extraIds;
+    } catch (error) {
+        console.error('⚠️ 读取restId临时文件失败:', error.message);
+        return [];
     }
 }
 
