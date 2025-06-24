@@ -83,9 +83,11 @@ def process_single(json_path: str) -> None:
     for item in items:
         user = item.get('user', {})
         screen_name = user.get('screenName', '').strip()
+        logger.debug(f"当前推文用户: '{screen_name}'")
         if screen_name.lower() != TARGET_USER.lower():
             continue  # 只处理指定用户
 
+        logger.info(f"匹配到目标用户: {screen_name}，准备发送消息")
         raw_time = item.get('publishTime', '')[:19]
         publish_time = raw_time.replace('T', ' ')
         text = item.get('fullText', '')
