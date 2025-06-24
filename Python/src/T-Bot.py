@@ -36,7 +36,7 @@ class Notifier:
     @staticmethod
     def send_telegram(message: str) -> bool:
         env = Config.get_env_vars()
-        token = env['bot_token']
+        token = env.get('bot_token')
         chat_id = -8106040237  # 固定 chat_id
         if not token:
             logger.error("未配置 BOT_TOKEN")
@@ -82,14 +82,14 @@ def process_single(json_path: str) -> None:
 
     for item in items:
         user = item.get('user', {})
-        screen_name = user.get('screen_name', '').strip()
+        screen_name = user.get('screenName', '').strip()
         if screen_name.lower() != TARGET_USER.lower():
             continue  # 只处理指定用户
 
-        raw_time = item.get('publish_time', '')[:19]
+        raw_time = item.get('publishTime', '')[:19]
         publish_time = raw_time.replace('T', ' ')
-        text = item.get('full_text', '')
-        url = item.get('url', '')
+        text = item.get('fullText', '')
+        url = item.get('tweetUrl', '')
         message = f"#{screen_name}\n{publish_time}\n{text}\n{url}"
 
         Notifier.send_telegram(message)
