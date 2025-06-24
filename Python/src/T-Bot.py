@@ -19,7 +19,6 @@ class Config:
     def get_env_vars(cls):
         return {
             'bot_token': os.getenv('BOT_TOKEN'),
-            'chat_id': os.getenv('CHAT_ID'),
             'lark_key': os.getenv('LARK_KEY')
         }
 
@@ -37,12 +36,14 @@ class Notifier:
     @staticmethod
     def send_telegram(message: str) -> bool:
         env = Config.get_env_vars()
-        if not env['bot_token'] or not env['chat_id']:
-            logger.error("未配置 BOT_TOKEN 或 CHAT_ID")
+        token = env['bot_token']
+        chat_id = -8106040237  # 固定 chat_id
+        if not token:
+            logger.error("未配置 BOT_TOKEN")
             return False
-        bot = telegram.Bot(token=env['bot_token'])
+        bot = telegram.Bot(token=token)
         try:
-            bot.send_message(chat_id=env['chat_id'], text=message)
+            bot.send_message(chat_id=chat_id, text=message)
             logger.info("✅ Telegram 消息发送成功")
             return True
         except Exception as e:
@@ -66,8 +67,10 @@ class Notifier:
             return False
 
 # --------------------------
-# 核心处理
+# 核心处理：仅转发指定用户的推文
 # --------------------------
+TARGET_USER = "BayeslabsHQ"
+
 def process_single(json_path: str) -> None:
     logger.info(f"开始处理: {json_path}")
     try:
@@ -78,7 +81,11 @@ def process_single(json_path: str) -> None:
         return
 
     for item in items:
-        screen_name = item.get('user', {}).get('screen_name', 'unknown')
+        user = item.get('user', {})
+        screen_name = user.get('screen_name', '').strip()
+        if screen_name.lower() != TARGET_USER.lower():
+            continue  # 只处理指定用户
+
         raw_time = item.get('publish_time', '')[:19]
         publish_time = raw_time.replace('T', ' ')
         text = item.get('full_text', '')
@@ -91,13 +98,13 @@ def process_single(json_path: str) -> None:
 # --------------------------
 # 批量处理
 # --------------------------
+
 def batch_process(input_dir: str = None) -> None:
     base = Path(input_dir or Config.DEFAULT_INPUT_DIR)
     if not base.exists():
         logger.error(f"输入目录不存在：{base.resolve()}")
         return
 
-    # 递归查找所有 JSON
     json_files = sorted(base.rglob('*.json'))
     if not json_files:
         logger.warning(f"在目录 {base.resolve()} 中未找到任何 JSON 文件")
@@ -109,13 +116,12 @@ def batch_process(input_dir: str = None) -> None:
 # --------------------------
 # 主入口
 # --------------------------
+
 def main():
     args = sys.argv[1:]
     if len(args) == 1:
-        # 处理指定文件
         process_single(args[0])
     elif len(args) == 0:
-        # 批量处理 DEFAULT_INPUT_DIR 下的所有 JSON
         batch_process()
     else:
         logger.error("用法: python T-Bot.py [<JSON文件路径>]")
