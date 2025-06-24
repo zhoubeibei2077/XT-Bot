@@ -2,7 +2,6 @@
 import sys
 import os
 import json
-import glob
 import requests
 import telegram
 from pathlib import Path
@@ -13,6 +12,8 @@ from datetime import datetime
 # --------------------------
 class Config:
     MESSAGE_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+    # 默认输入目录（存放每日推文 JSON 的 output 目录）
+    DEFAULT_INPUT_DIR = "../output"
 
     @classmethod
     def get_env_vars(cls):
@@ -78,12 +79,8 @@ def process_single(json_path: str) -> None:
 
     for item in items:
         screen_name = item.get('user', {}).get('screen_name', 'unknown')
-        # 兼容 ISO 格式时间，取前 19 字符并替换 T 为 空格
         raw_time = item.get('publish_time', '')[:19]
-        try:
-            publish_time = raw_time.replace('T', ' ')
-        except Exception:
-            publish_time = raw_time
+        publish_time = raw_time.replace('T', ' ')
         text = item.get('full_text', '')
         url = item.get('url', '')
         message = f"#{screen_name}\n{publish_time}\n{text}\n{url}"
@@ -94,11 +91,18 @@ def process_single(json_path: str) -> None:
 # --------------------------
 # 批量处理
 # --------------------------
-def batch_process(directory: str = '.') -> None:
-    json_files = sorted(Path(directory).glob('*.json'))
-    if not json_files:
-        logger.warning(f"在目录 {directory} 中未找到任何 JSON 文件")
+def batch_process(input_dir: str = None) -> None:
+    base = Path(input_dir or Config.DEFAULT_INPUT_DIR)
+    if not base.exists():
+        logger.error(f"输入目录不存在：{base.resolve()}")
         return
+
+    # 递归查找所有 JSON
+    json_files = sorted(base.rglob('*.json'))
+    if not json_files:
+        logger.warning(f"在目录 {base.resolve()} 中未找到任何 JSON 文件")
+        return
+
     for path in json_files:
         process_single(str(path))
 
@@ -111,10 +115,10 @@ def main():
         # 处理指定文件
         process_single(args[0])
     elif len(args) == 0:
-        # 没有参数则批量处理当前目录下所有 JSON
+        # 批量处理 DEFAULT_INPUT_DIR 下的所有 JSON
         batch_process()
     else:
-        logger.error("用法: python T-Bot-text-only.py [<JSON文件路径>]")
+        logger.error("用法: python T-Bot.py [<JSON文件路径>]")
         sys.exit(1)
 
 if __name__ == "__main__":
